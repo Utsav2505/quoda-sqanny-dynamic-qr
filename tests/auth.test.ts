@@ -63,9 +63,9 @@ describe("sendMagicLink", () => {
     const headers = (init as RequestInit).headers as Record<string, string>;
     expect(headers.Authorization).toBe("Bearer re_test_key");
     const body = JSON.parse((init as RequestInit).body as string);
-    expect(body.from).toBe("Quoda <login@getquoda.com>");
+    expect(body.from).toBe("Sqanny <sqanny-noreply@chetnaverse.com>");
     expect(body.to).toContain("user@example.com");
-    expect(body.subject).toBe("Your Quoda sign-in link");
+    expect(body.subject).toBe("Your Sqanny sign-in link");
     expect(body.html).toContain("https://app/auth/verify?token=abc");
     fetchSpy.mockRestore();
   });

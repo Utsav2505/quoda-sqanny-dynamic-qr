@@ -24,7 +24,7 @@ import { uploadApi } from "./routes/api/upload";
 
 const app = new Hono<{ Bindings: Bindings }>();
 
-app.get("/healthz", (c) => c.json({ ok: true, service: "quoda" }));
+app.get("/healthz", (c) => c.json({ ok: true, service: "sqanny" }));
 
 // Brand favicon: the Q logomark built from QR modules.
 app.get("/favicon.svg", (c) =>

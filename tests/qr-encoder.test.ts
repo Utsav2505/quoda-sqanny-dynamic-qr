@@ -3,7 +3,7 @@ import { encodeMatrix } from "../src/lib/qr/encoder";
 
 describe("encodeMatrix", () => {
   it("returns an NxN row-major boolean matrix for a known string", () => {
-    const m = encodeMatrix("https://getquoda.com", "M");
+    const m = encodeMatrix("https://getsqanny.com", "M");
     expect(Array.isArray(m)).toBe(true);
     expect(m.length).toBeGreaterThan(0);
     // square

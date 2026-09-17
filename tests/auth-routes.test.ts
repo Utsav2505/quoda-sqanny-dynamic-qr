@@ -29,7 +29,7 @@ describe("GET /login", () => {
     const res = await auth.fetch(new Request("https://q.test/login"), devEnv, ctx);
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("Sign in to Quoda");
+    expect(html).toContain("Sign in to Sqanny");
     expect(html).toContain('name="email"');
     expect(html).toContain("Send sign-in link");
   });

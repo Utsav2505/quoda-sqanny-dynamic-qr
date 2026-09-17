@@ -1,10 +1,10 @@
 {
-  "name": "quoda",
+  "name": "sqanny",
   "version": "0.1.0",
-  "description": "Open-source, self-hostable QR platform on Cloudflare. Dynamic QR codes that never break + scan analytics.",
+  "description": "Dynamic QR codes that never break + scan analytics.",
   "type": "module",
   "license": "MIT",
-  "author": "Can Erdogan <can@canerdogan.me>",
+  "author": "CHETNAVERSE AI SYSTEMS LLP",
   "scripts": {
     "dev": "npm run build:tokens && npm run build:client && wrangler dev",
     "build:tokens": "node scripts/build-tokens.mjs",
@@ -26,6 +26,7 @@
     "@cloudflare/workers-types": "^4.20241218.0",
     "@playwright/test": "^1.49.1",
     "esbuild": "^0.24.2",
+    "js-yaml": "^5.4.2",
     "jsqr": "^1.4.0",
     "typescript": "^5.7.2",
     "vitest": "^3.1.4",

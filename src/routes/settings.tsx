@@ -87,12 +87,12 @@ settings.get("/app/settings", async (c) => {
           </dl>
 
           <div class="settings-upgrade">
-            <Button variant="secondary" disabled aria-label="Upgrade to Pro — coming in Quoda Cloud">
+            <Button variant="secondary" disabled aria-label="Upgrade to Pro — coming in Sqanny Cloud">
               Upgrade to Pro — Coming in Cloud
             </Button>
             <p class="settings-upgrade-note t-caption text-tertiary">
-              Self-hosted Quoda is fully featured. Managed Pro plans arrive with
-              Quoda Cloud.
+              Self-hosted Sqanny is fully featured. Managed Pro plans arrive with
+              Sqanny Cloud.
             </p>
           </div>
         </Card>

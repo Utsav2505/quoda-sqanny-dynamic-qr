@@ -166,7 +166,7 @@ onboarding.get("/onboarding", (c) => {
   // A blank-but-valid placeholder QR so step 3 has something to show before the
   // live preview replaces it.
   const placeholderSvg = renderSvg(
-    encodeMatrix("https://getquoda.com", DEFAULT_DESIGN.ecc),
+    encodeMatrix("https://getsqanny.com", DEFAULT_DESIGN.ecc),
     DEFAULT_DESIGN,
   );
 
@@ -395,7 +395,7 @@ onboarding.post("/onboarding/complete", async (c) => {
     // URL → dynamic by default (the reliability promise: change the target,
     // never the code). The printed QR encodes /r/<code>; destination is the
     // user's real target.
-    const rawTarget = (fields.url ?? "").trim() || "https://getquoda.com";
+    const rawTarget = (fields.url ?? "").trim() || "https://getsqanny.com";
     const destination = /^[a-z][a-z0-9+.-]*:\/\//i.test(rawTarget)
       ? rawTarget
       : `https://${rawTarget}`;
@@ -547,7 +547,7 @@ const ONBOARDING_ISLAND = `(function(){
   function previewFields(){
     if(richKinds[chosen]){
       var f=activeFields();
-      return {url:(f.link1||f.link2||'https://getquoda.com')};
+      return {url:(f.link1||f.link2||'https://getsqanny.com')};
     }
     return activeFields();
   }

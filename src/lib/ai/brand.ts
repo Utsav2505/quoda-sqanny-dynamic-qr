@@ -196,7 +196,7 @@ export async function brandMatch(env: Bindings, rawUrl: string): Promise<BrandKi
   try {
     const res = await fetch(url.toString(), {
       headers: {
-        "user-agent": "QuodaBrandMatch/1.0 (+https://quoda.codebyte.dev)",
+        "user-agent": "SqannyBrandMatch/1.0 (+https://sqanny.codebyte.dev)",
         "accept-language": "en-US,en;q=0.9",
       },
       redirect: "follow",

@@ -52,11 +52,11 @@ export const Footer: FC<FooterProps> = ({
   <footer class="footer">
     <div class="footer-inner">
       <div class="footer-brand">
-        <a class="nav-brand" href="/" aria-label="Quoda home">
-          <span class="nav-brandmark" aria-hidden="true">
-            <Icon name="qr" size={22} />
+        <a class="nav-brand" href="/" aria-label="Sqanny home">
+          <span class="nav-brandmark" aria-hidden="true" style="display: flex; align-items: center;">
+            <img src="/logo.png" alt="Sqanny logo" style="height: 22px; width: auto;" />
           </span>
-          <span class="nav-wordmark">quoda</span>
+          <span class="nav-wordmark">sqanny</span>
         </a>
         <p class="footer-tagline t-body-sm text-secondary">The QR code that never breaks.</p>
       </div>
@@ -80,7 +80,7 @@ export const Footer: FC<FooterProps> = ({
     </div>
 
     <div class="footer-meta">
-      <p class="t-caption text-tertiary">© {new Date().getFullYear()} Quoda · MIT licensed</p>
+      <p class="t-caption text-tertiary">© {new Date().getFullYear()} CHETNAVERSE AI SYSTEMS LLP</p>
       <a class="footer-link t-caption" href={repoHref} rel="noopener">
         <span class="footer-meta-icon" aria-hidden="true">
           <Icon name="link" size={14} />

@@ -301,7 +301,7 @@ const FEATURE_SECTIONS: {
   {
     icon: "settings",
     title: "Self-hostable & open-source",
-    body: "Quoda is MIT licensed and runs entirely on Cloudflare primitives. Host it yourself in minutes.",
+    body: "Sqanny is MIT licensed and runs entirely on Cloudflare primitives. Host it yourself in minutes.",
     points: [
       "Cloudflare Worker, D1, KV and R2 — nothing else required",
       "Runs fully locally with a single dev command",
@@ -418,13 +418,13 @@ marketing.get("/pricing", (c) => {
   return c.html(
     <SiteShell
       title="Pricing"
-      description="Free forever, self-hostable. A hosted Pro plan is coming in Quoda Cloud."
+      description="Free forever, self-hostable. A hosted Pro plan is coming in Sqanny Cloud."
       active="pricing"
     >
       <SectionHeader
         eyebrow="Pricing"
         title="Free to run. Yours to keep."
-        lead="Quoda is open-source and free to self-host. A managed Pro plan arrives with Quoda Cloud."
+        lead="Sqanny is open-source and free to self-host. A managed Pro plan arrives with Sqanny Cloud."
       />
       <div class="plan-grid">
         <PlanCard
@@ -446,7 +446,7 @@ marketing.get("/pricing", (c) => {
           features={proFeatures}
           featured
           cta={
-            <Button variant="secondary" block disabled aria-label="Pro plan coming in Quoda Cloud">
+            <Button variant="secondary" block disabled aria-label="Pro plan coming in Sqanny Cloud">
               Coming in Cloud
             </Button>
           }
@@ -508,7 +508,7 @@ marketing.get("/use-cases", (c) =>
       <SectionHeader
         eyebrow="Use cases"
         title="Wherever it's printed, it keeps working."
-        lead="The places a QR code lives longest are the ones where it can't afford to break. That's exactly where Quoda fits."
+        lead="The places a QR code lives longest are the ones where it can't afford to break. That's exactly where Sqanny fits."
       />
       <div class="usecase-grid">
         {USE_CASES.map((u) => (
@@ -547,13 +547,13 @@ marketing.get("/docs", (c) =>
   c.html(
     <SiteShell
       title="Docs — Self-host quickstart"
-      description="Run Quoda locally and deploy it to your own Cloudflare account: D1, KV, and R2 setup with wrangler."
+      description="Run Sqanny locally and deploy it to your own Cloudflare account: D1, KV, and R2 setup with wrangler."
       active="docs"
     >
       <SectionHeader
         eyebrow="Docs"
         title="Self-host quickstart."
-        lead="Quoda runs entirely on Cloudflare primitives. You can have it running locally in a couple of minutes, then deploy the same code to your own account."
+        lead="Sqanny runs entirely on Cloudflare primitives. You can have it running locally in a couple of minutes, then deploy the same code to your own account."
       />
 
       <div class="docs">
@@ -606,7 +606,7 @@ marketing.get("/docs", (c) =>
               tokens and bundles the client islands.
             </p>
             <CodeBlock>{`git clone https://github.com/canerdogan/quoda
-cd quoda
+cd sqanny
 npm install
 npm run migrate:local
 npm run dev`}</CodeBlock>
@@ -622,13 +622,13 @@ npm run dev`}</CodeBlock>
           <section id="resources" class="docs-section">
             <h2 class="t-display-md">Create D1, KV &amp; R2</h2>
             <p class="t-body text-secondary">
-              To deploy, create the bindings Quoda expects, then copy the
+              To deploy, create the bindings Sqanny expects, then copy the
               returned ids into <code class="code-inline">wrangler.jsonc</code>.
-              Quoda needs one D1 database, three KV namespaces, and one R2
+              Sqanny needs one D1 database, three KV namespaces, and one R2
               bucket.
             </p>
             <CodeBlock>{`# D1 database (binding: DB)
-wrangler d1 create quoda
+wrangler d1 create sqanny
 
 # KV namespaces (bindings: SCAN_COUNTERS, RATE_LIMIT, SESSION_CACHE)
 wrangler kv namespace create SCAN_COUNTERS
@@ -636,7 +636,7 @@ wrangler kv namespace create RATE_LIMIT
 wrangler kv namespace create SESSION_CACHE
 
 # R2 bucket (binding: ASSETS_BUCKET)
-wrangler r2 bucket create quoda-assets`}</CodeBlock>
+wrangler r2 bucket create sqanny-assets`}</CodeBlock>
             <p class="t-body text-secondary">
               Apply the migrations to your remote database once it exists:
             </p>

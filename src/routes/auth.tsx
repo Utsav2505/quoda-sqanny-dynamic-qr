@@ -25,7 +25,7 @@ const AuthShell: FC<
     {raw("<!DOCTYPE html>")}
     <Layout title={title}>
       <main class="auth">
-        <a class="auth-brand" href="/" aria-label="Quoda home">
+        <a class="auth-brand" href="/" aria-label="Sqanny home">
           <span class="auth-brandmark" aria-hidden="true">
             <Icon name="qr" size={22} />
           </span>
@@ -56,7 +56,7 @@ function looksLikeEmail(value: string): boolean {
 auth.get("/login", (c) =>
   c.html(
     <AuthShell title="Sign in" icon={<Icon name="link" size={24} />}>
-      <h1 class="auth-title t-heading-sm">Sign in to Quoda</h1>
+      <h1 class="auth-title t-heading-sm">Sign in to Sqanny</h1>
       <p class="auth-lead t-body text-secondary">
         Enter your email and we will send you a secure sign-in link. No
         password to remember — the link is all you need.
@@ -94,7 +94,7 @@ auth.post("/login", async (c) => {
   if (!looksLikeEmail(email)) {
     return c.html(
       <AuthShell title="Sign in" icon={<Icon name="link" size={24} />}>
-        <h1 class="auth-title t-heading-sm">Sign in to Quoda</h1>
+        <h1 class="auth-title t-heading-sm">Sign in to Sqanny</h1>
         <p class="auth-lead t-body text-secondary">
           Enter your email and we will send you a secure sign-in link. No
           password to remember — the link is all you need.

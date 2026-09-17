@@ -302,8 +302,8 @@ function init(): void {
   }
 
   function exportName(): string {
-    const t = (titleInput?.value || "quoda-qr").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-    return t || "quoda-qr";
+    const t = (titleInput?.value || "sqanny-qr").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    return t || "sqanny-qr";
   }
 
   function downloadBlob(blob: Blob, filename: string): void {

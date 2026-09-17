@@ -340,7 +340,7 @@ function renderKind(kind: DynamicPageKind, raw_json: string, qr: QrRow, slug: st
   } catch {
     data = {};
   }
-  const fallbackTitle = qr.title || "Quoda";
+  const fallbackTitle = qr.title || "Sqanny";
   switch (kind) {
     case "menu":
       return <MenuPage data={data as MenuData} fallbackTitle={fallbackTitle} />;
@@ -369,7 +369,7 @@ function pageTitle(kind: DynamicPageKind, data_json: string, qr: QrRow): string 
   } catch {
     /* fall through */
   }
-  return qr.title || "Quoda";
+  return qr.title || "Sqanny";
 }
 
 pages.get("/p/:slug", async (c) => {

@@ -86,7 +86,7 @@ styleguide.get("/", (c) =>
 
           <main class="page-main">
             <header style="margin-bottom:var(--space-32);">
-              <h1 class="t-display-lg">Quoda design system</h1>
+              <h1 class="t-display-lg">Sqanny design system</h1>
               <p class="t-body-lg text-secondary" style="margin-top:var(--space-8);max-width:60ch;">
                 Every component in realistic states. Toggle the theme (top-right) to QA
                 light and dark. All styling is token-driven; the QR preview always forces

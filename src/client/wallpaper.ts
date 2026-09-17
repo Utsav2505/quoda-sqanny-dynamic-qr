@@ -727,7 +727,7 @@ if (urlInput && genBtn && canvas) {
       if (!blob) return;
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = `${lastSource}-quoda-wallpaper.png`;
+      a.download = `${lastSource}-sqanny-wallpaper.png`;
       document.body.appendChild(a);
       a.click();
       a.remove();

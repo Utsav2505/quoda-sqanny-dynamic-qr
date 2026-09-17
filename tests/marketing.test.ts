@@ -75,7 +75,7 @@ describe("marketing home", () => {
     const html = await res.text();
     expect(html).toContain("npm run dev");
     expect(html).toContain("npm run migrate:local");
-    expect(html).toContain("wrangler d1 create quoda");
+    expect(html).toContain("wrangler d1 create sqanny");
     expect(html).toContain("wrangler kv namespace create");
     expect(html).toContain("wrangler r2 bucket create");
   });

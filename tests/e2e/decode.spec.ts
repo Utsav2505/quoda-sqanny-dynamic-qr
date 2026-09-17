@@ -61,7 +61,7 @@ test.describe("QR scannability — generated codes actually decode", () => {
     await page.addScriptTag({ path: "node_modules/jsqr/dist/jsQR.js" });
   });
 
-  const url = "https://getquoda.com/test-scan";
+  const url = "https://getsqanny.com/test-scan";
 
   test("default design (square modules)", async ({ page }) => {
     const svg = await previewSvg(page, { type: "url", fields: { url } });
@@ -111,10 +111,10 @@ test.describe("QR scannability — generated codes actually decode", () => {
   test("wifi payload decodes to the canonical WIFI string", async ({ page }) => {
     const svg = await previewSvg(page, {
       type: "wifi",
-      fields: { ssid: "Quoda Cafe", password: "latte123", auth: "WPA" },
+      fields: { ssid: "Sqanny Cafe", password: "latte123", auth: "WPA" },
     });
     const decoded = await decodeSvg(page, svg);
     expect(decoded).toContain("WIFI:");
-    expect(decoded).toContain("Quoda Cafe");
+    expect(decoded).toContain("Sqanny Cafe");
   });
 });

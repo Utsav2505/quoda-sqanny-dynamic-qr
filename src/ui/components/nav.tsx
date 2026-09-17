@@ -25,11 +25,11 @@ export interface NavProps {
 export const Nav: FC<NavProps> = ({ links = [], cta, brandHref = "/" }) => (
   <header class="nav">
     <div class="nav-inner">
-      <a class="nav-brand" href={brandHref} aria-label="Quoda home">
-        <span class="nav-brandmark" aria-hidden="true">
-          <Icon name="qr" size={22} />
+      <a class="nav-brand" href={brandHref} aria-label="Sqanny home">
+        <span class="nav-brandmark" aria-hidden="true" style="display: flex; align-items: center;">
+          <img src="/logo.png" alt="Sqanny logo" style="height: 22px; width: auto;" />
         </span>
-        <span class="nav-wordmark">quoda</span>
+        <span class="nav-wordmark">sqanny</span>
       </a>
 
       {links.length > 0 ? (

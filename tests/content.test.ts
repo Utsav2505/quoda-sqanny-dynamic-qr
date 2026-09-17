@@ -4,14 +4,14 @@ import { buildPayload } from "../src/lib/qr/content";
 describe("buildPayload", () => {
   describe("url", () => {
     it("returns a fully-qualified URL as-is", () => {
-      expect(buildPayload("url", { url: "https://getquoda.com" })).toBe(
-        "https://getquoda.com"
+      expect(buildPayload("url", { url: "https://getsqanny.com" })).toBe(
+        "https://getsqanny.com"
       );
     });
 
     it("prepends https:// when no protocol is present", () => {
-      expect(buildPayload("url", { url: "getquoda.com" })).toBe(
-        "https://getquoda.com"
+      expect(buildPayload("url", { url: "getsqanny.com" })).toBe(
+        "https://getsqanny.com"
       );
     });
 
@@ -195,8 +195,8 @@ describe("buildPayload", () => {
     for (const type of ["pdf", "menu", "business", "appstore", "social"] as const) {
       it(`returns the resolved url for ${type}`, () => {
         expect(
-          buildPayload(type, { url: "https://getquoda.com/r/abc123" })
-        ).toBe("https://getquoda.com/r/abc123");
+          buildPayload(type, { url: "https://getsqanny.com/r/abc123" })
+        ).toBe("https://getsqanny.com/r/abc123");
       });
 
       it(`throws for ${type} when no url present`, () => {

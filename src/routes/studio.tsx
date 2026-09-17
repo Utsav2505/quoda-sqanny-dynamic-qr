@@ -99,12 +99,12 @@ const FIELDS: Record<QrType, FieldDef[]> = {
     { key: "description", label: "Description", kind: "textarea", placeholder: "What's inside" },
   ],
   menu: [
-    { key: "name", label: "Place name", kind: "text", placeholder: "Café Quoda", required: true },
+    { key: "name", label: "Place name", kind: "text", placeholder: "Café Sqanny", required: true },
     { key: "tagline", label: "Tagline", kind: "text", placeholder: "Open daily 8–6" },
     { key: "items", label: "Menu items (one per line: Name | Price)", kind: "textarea", placeholder: "Espresso | 3.00\nFlat White | 4.20", required: true },
   ],
   business: [
-    { key: "name", label: "Business name", kind: "text", placeholder: "Quoda Inc.", required: true },
+    { key: "name", label: "Business name", kind: "text", placeholder: "Sqanny Inc.", required: true },
     { key: "tagline", label: "Tagline", kind: "text", placeholder: "The QR code that never breaks" },
     { key: "phone", label: "Phone", kind: "tel", placeholder: "+1 555 000 1234" },
     { key: "email", label: "Email", kind: "email", placeholder: "hello@example.com" },
@@ -112,7 +112,7 @@ const FIELDS: Record<QrType, FieldDef[]> = {
     { key: "address", label: "Address", kind: "textarea", placeholder: "1 Market St, San Francisco" },
   ],
   appstore: [
-    { key: "name", label: "App name", kind: "text", placeholder: "Quoda", required: true },
+    { key: "name", label: "App name", kind: "text", placeholder: "Sqanny", required: true },
     { key: "iosUrl", label: "App Store URL", kind: "url", placeholder: "https://apps.apple.com/…" },
     { key: "androidUrl", label: "Google Play URL", kind: "url", placeholder: "https://play.google.com/…" },
     { key: "fallbackUrl", label: "Fallback URL", kind: "url", placeholder: "example.com", hint: "Shown on desktop and other devices." },

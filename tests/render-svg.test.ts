@@ -18,7 +18,7 @@ function countDark(matrix: boolean[][]): number {
 }
 
 describe("renderSvg", () => {
-  const matrix = encodeMatrix("https://getquoda.com", "M");
+  const matrix = encodeMatrix("https://getsqanny.com", "M");
 
   it("produces a standalone <svg> string", () => {
     const svg = renderSvg(matrix, baseDesign);

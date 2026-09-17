@@ -31,7 +31,7 @@ wallpaper.get("/wallpaper", (c) =>
       {raw("<!DOCTYPE html>")}
       <Layout
         title="AI Phone Wallpaper"
-        description="Turn any link into a branded phone wallpaper with a scannable QR — AI generates the background, Quoda renders the code."
+        description="Turn any link into a branded phone wallpaper with a scannable QR — AI generates the background, Sqanny renders the code."
       >
         <div class="page">
           <Nav links={NAV_LINKS} cta={{ label: "Make it permanent", href: "/login" }} />
@@ -39,7 +39,7 @@ wallpaper.get("/wallpaper", (c) =>
             <header class="wp-head">
               <h1 class="t-display-md">QR wallpaper</h1>
               <p class="t-body-lg text-secondary wp-sub">
-                Paste a link. AI paints an on-brand background, and Quoda composes a
+                Paste a link. AI paints an on-brand background, and Sqanny composes a
                 meeting-ready poster — brand logo, a real scannable code, and a tagline —
                 straight onto your phone wallpaper.
               </p>

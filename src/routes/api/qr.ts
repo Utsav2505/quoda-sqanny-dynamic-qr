@@ -544,11 +544,11 @@ function titleFromType(type: QrType): string {
 }
 
 function slugify(s: string): string {
-  return (s || "quoda-qr")
+  return (s || "sqanny-qr")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 48) || "quoda-qr";
+    .slice(0, 48) || "sqanny-qr";
 }
 
 function messageOf(err: unknown): string {

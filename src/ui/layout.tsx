@@ -15,7 +15,7 @@ export const Layout: FC<LayoutProps> = ({ title, description, children }) => (
     <head>
       <meta charset="utf-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-      <title>{title ? `${title} · Quoda` : "Quoda — The QR code that never breaks"}</title>
+      <title>{title ? `${title} · Sqanny` : "Sqanny — The QR code that never breaks"}</title>
       <meta
         name="description"
         content={description ?? "Dynamic QR codes that never break, with scan analytics. Open-source, self-hostable, built on Cloudflare."}

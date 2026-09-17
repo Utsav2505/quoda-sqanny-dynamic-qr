@@ -1,6 +1,6 @@
 <div align="center">
 
-# Quoda
+# Sqanny
 
 ### The QR code that never breaks.
 
@@ -11,9 +11,9 @@ Dynamic QR codes whose destination is editable forever — print once, re-target
 
 ---
 
-## Why Quoda
+## Why Sqanny
 
-A printed QR code is permanent, but the thing it points to usually isn't. **Dynamic QR codes** solve this: the printed code encodes a short Quoda link (`/r/<code>`) that you can re-point at any time. The sticker on your menu, poster, or business card never has to be reprinted.
+A printed QR code is permanent, but the thing it points to usually isn't. **Dynamic QR codes** solve this: the printed code encodes a short Sqanny link (`/r/<code>`) that you can re-point at any time. The sticker on your menu, poster, or business card never has to be reprinted.
 
 - **Static QR** — classic codes that embed the data directly (URL, text, Wi-Fi, email, phone, SMS, vCard).
 - **Dynamic QR** — editable destination + scan analytics. The printed code never changes.
@@ -71,11 +71,11 @@ Open <http://localhost:8787>. To sign in, enter any email on `/login` — the ma
 1. **Create the resources** (one-time), then put the returned IDs into `wrangler.jsonc`:
 
    ```bash
-   npx wrangler d1 create quoda
+   npx wrangler d1 create sqanny
    npx wrangler kv namespace create SCAN_COUNTERS
    npx wrangler kv namespace create RATE_LIMIT
    npx wrangler kv namespace create SESSION_CACHE
-   npx wrangler r2 bucket create quoda-assets
+   npx wrangler r2 bucket create sqanny-assets
    ```
 
 2. **Apply the schema to the remote database:**
@@ -125,4 +125,4 @@ docs/superpowers/              spec + implementation plan
 
 ## License
 
-[MIT](./LICENSE) © 2026 Can Erdogan
+[MIT](./LICENSE) © 2026 CHETNAVERSE AI SYSTEMS LLP
