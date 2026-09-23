@@ -31,18 +31,20 @@ a { color: inherit; text-decoration: none; }
 }
 
 /* Type scale utilities (values from the design guideline tokens) */
-.t-display-hero { font-size: var(--fs-display-hero); font-weight: var(--fw-display-hero); line-height: var(--lh-display-hero); letter-spacing: var(--ls-display-hero); }
+.t-hero-display { font-size: var(--fs-hero-display); font-weight: var(--fw-hero-display); line-height: var(--lh-hero-display); letter-spacing: var(--ls-hero-display); font-family: var(--ff-hero-display); }
+.t-display-hero { font-size: var(--fs-hero-display); font-weight: var(--fw-hero-display); line-height: var(--lh-hero-display); letter-spacing: var(--ls-hero-display); }
 .t-display-lg   { font-size: var(--fs-display-lg);   font-weight: var(--fw-display-lg);   line-height: var(--lh-display-lg);   letter-spacing: var(--ls-display-lg); }
-.t-display-md   { font-size: var(--fs-display-md);   font-weight: var(--fw-display-md);   line-height: var(--lh-display-md);   letter-spacing: var(--ls-display-md); }
-.t-heading-sm   { font-size: var(--fs-heading-sm);   font-weight: var(--fw-heading-sm);   line-height: var(--lh-heading-sm);   letter-spacing: var(--ls-heading-sm); }
-.t-body-lg      { font-size: var(--fs-body-lg);      font-weight: var(--fw-body-lg);      line-height: var(--lh-body-lg); }
-.t-body         { font-size: var(--fs-body);         font-weight: var(--fw-body);         line-height: var(--lh-body);         letter-spacing: var(--ls-body); }
+.t-display-md   { font-size: var(--fs-heading-2);    font-weight: var(--fw-heading-2);    line-height: var(--lh-heading-2);    letter-spacing: var(--ls-heading-2); }
+.t-heading-sm   { font-size: var(--fs-heading-5);    font-weight: var(--fw-heading-5);    line-height: var(--lh-heading-5); }
+.t-body-lg      { font-size: var(--fs-subtitle);     font-weight: var(--fw-subtitle);     line-height: var(--lh-subtitle); }
+.t-body         { font-size: var(--fs-body-md);      font-weight: var(--fw-body-md);      line-height: var(--lh-body-md); }
 .t-body-sm      { font-size: var(--fs-body-sm);      font-weight: var(--fw-body-sm);      line-height: var(--lh-body-sm); }
-.t-ui-label     { font-size: var(--fs-ui-label);     font-weight: var(--fw-ui-label);     line-height: var(--lh-ui-label);     letter-spacing: var(--ls-ui-label); }
-.t-caption      { font-size: var(--fs-caption);      font-weight: var(--fw-caption);      line-height: var(--lh-caption);      letter-spacing: var(--ls-caption); }
+.t-ui-label     { font-size: var(--fs-body-sm-medium); font-weight: var(--fw-body-sm-medium); line-height: var(--lh-body-sm-medium); letter-spacing: 0.5px; }
+.t-caption      { font-size: var(--fs-caption);      font-weight: var(--fw-caption);      line-height: var(--lh-caption); }
 
-.text-secondary { color: var(--color-text-secondary); }
-.text-tertiary  { color: var(--color-text-tertiary); }
+.text-center    { text-align: center; }
+.text-secondary { color: var(--color-slate); }
+.text-tertiary  { color: var(--color-steel); }
 .tnum { font-feature-settings: "tnum" 1, "kern" 1; }
 
 .visually-hidden {

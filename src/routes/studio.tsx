@@ -139,7 +139,7 @@ const DEFAULT_DESIGN: QrDesign = {
 /** A representative starting QR so the preview is never blank on first paint. */
 function placeholderSvg(design: QrDesign): string {
   try {
-    const matrix = encodeMatrix("https://getquoda.com", design.ecc);
+    const matrix = encodeMatrix("https://getsqanny.com", design.ecc);
     return renderSvg(matrix, safePalette(design));
   } catch {
     return "";
@@ -179,7 +179,7 @@ const FieldControl: FC<{ type: QrType; field: FieldDef; value?: string }> = ({ t
     id,
     name: field.key,
     "data-field": field.key,
-    class: "input",
+    class: "text-input",
   } as const;
 
   if (field.kind === "textarea") {
@@ -264,7 +264,7 @@ const StudioView: FC<StudioViewProps> = ({ mode, activeType, fields, design, isD
         {/* ---- Left: type picker + content + customization ---- */}
         <div class="studio-controls stack">
           {/* Type picker */}
-          <section class="studio-panel" aria-labelledby="sp-type">
+          <section class="card-base" aria-labelledby="sp-type">
             <h2 class="t-heading-sm studio-panel-title" id="sp-type">Type</h2>
             <div class="studio-types" role="radiogroup" aria-label="QR code type">
               {TYPES.map((t) => (
@@ -285,15 +285,15 @@ const StudioView: FC<StudioViewProps> = ({ mode, activeType, fields, design, isD
           </section>
 
           {/* Title */}
-          <section class="studio-panel">
+          <section class="card-base">
             <div class="field">
               <label class="field-label" for="qr-title">Name (for your dashboard)</label>
-              <input class="input" id="qr-title" name="title" type="text" data-title placeholder="My QR code" value={title} />
+              <input class="text-input" id="qr-title" name="title" type="text" data-title placeholder="My QR code" value={title} />
             </div>
           </section>
 
           {/* Per-type content forms (one block per type, toggled by JS) */}
-          <section class="studio-panel" aria-labelledby="sp-content">
+          <section class="card-base" aria-labelledby="sp-content">
             <h2 class="t-heading-sm studio-panel-title" id="sp-content">Content</h2>
             {TYPES.map((t) => (
               <div class="studio-fields" data-fields-for={t.type} hidden={t.type !== activeType}>
@@ -310,7 +310,7 @@ const StudioView: FC<StudioViewProps> = ({ mode, activeType, fields, design, isD
           </section>
 
           {/* Dynamic toggle */}
-          <section class="studio-panel" data-dynamic-panel>
+          <section class="card-base" data-dynamic-panel>
             <div class="studio-toggle-row">
               <label class="studio-check-row" for="qr-dynamic">
                 <input type="checkbox" id="qr-dynamic" data-dynamic checked={isDynamic} />
@@ -325,7 +325,7 @@ const StudioView: FC<StudioViewProps> = ({ mode, activeType, fields, design, isD
           </section>
 
           {/* Customization */}
-          <section class="studio-panel" aria-labelledby="sp-design">
+          <section class="card-base" aria-labelledby="sp-design">
             <h2 class="t-heading-sm studio-panel-title" id="sp-design">Customize</h2>
             {/* Brand Match — AI styles the code to the destination's brand. */}
             <div class="studio-brand">

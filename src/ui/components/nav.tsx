@@ -62,7 +62,7 @@ export const Nav: FC<NavProps> = ({ links = [], cta, brandHref = "/" }) => (
           </span>
         </button>
         {cta ? (
-          <a class="btn btn-primary nav-cta" href={cta.href}>
+          <a class="button-primary nav-cta" href={cta.href}>
             <span class="btn-label">{cta.label}</span>
           </a>
         ) : null}

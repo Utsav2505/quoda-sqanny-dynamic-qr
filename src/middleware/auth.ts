@@ -6,6 +6,7 @@ export interface AppUser {
   id: string;
   email: string;
   plan_id: string;
+  role: string;
   onboarded_at: number | null;
 }
 
@@ -26,6 +27,15 @@ export const loadUser = createMiddleware<AppEnv>(async (c, next) => {
 export const requireAuth = createMiddleware<AppEnv>(async (c, next) => {
   const user = await getUserFromRequest(c.env, c.req.raw);
   if (!user) return c.redirect("/login", 302);
+  c.set("user", user);
+  await next();
+});
+
+/** Guard: requires a logged-in admin user. Sets c.get("user"). */
+export const requireAdmin = createMiddleware<AppEnv>(async (c, next) => {
+  const user = await getUserFromRequest(c.env, c.req.raw);
+  if (!user) return c.redirect("/login", 302);
+  if (user.role !== "admin") return c.text("Forbidden", 403);
   c.set("user", user);
   await next();
 });

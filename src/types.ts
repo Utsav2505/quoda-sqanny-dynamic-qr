@@ -22,3 +22,11 @@ export type QrType =
   | "pdf" | "menu" | "business" | "appstore" | "social";
 
 export type Ecc = "L" | "M" | "Q" | "H";
+
+// ---------------------------------------------------------------------------
+// Product QR Management System types
+// ---------------------------------------------------------------------------
+
+export type ProductQrStatus = "available" | "claimed" | "active" | "disabled" | "retired";
+
+export type BatchStatus = "pending" | "generating" | "completed" | "failed";

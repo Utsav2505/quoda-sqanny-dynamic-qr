@@ -85,6 +85,7 @@ export async function getUserFromRequest(
   id: string;
   email: string;
   plan_id: string;
+  role: string;
   onboarded_at: number | null;
 } | null> {
   const sessionId = readCookie(request, SESSION_COOKIE);
@@ -130,6 +131,7 @@ export async function getUserFromRequest(
       id: user.id,
       email: user.email,
       plan_id: user.plan_id,
+      role: user.role,
       onboarded_at: user.onboarded_at,
     };
   } catch (err) {

@@ -7,7 +7,8 @@
   "account_id": "fea3602912f3939a9c3d8bc45c6b7829",
   "observability": { "enabled": true },
   "assets": {
-    "directory": "./public"
+    "directory": "./dist",
+    "binding": "ASSETS"
   },
   "vars": {
     "APP_URL": "https://quoda.codebyte.dev"

@@ -1,104 +1,92 @@
-// Compiles docs/design/design-guideline.json -> public/styles/tokens.css
-// This is the ONLY place hardcoded color/spacing/motion values are allowed.
-// Components must reference var(--token) exclusively.
+// Compiles DESIGN.md -> public/styles/tokens.css
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import * as yaml from "js-yaml";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const g = JSON.parse(readFileSync(resolve(root, "docs/design/design-guideline.json"), "utf8"));
-const t = g.design_tokens;
-const m = g.motion_system;
+const mdContent = readFileSync(resolve(root, "DESIGN.md"), "utf8");
 
-const isTokenKey = (k) => k.startsWith("--");
-const emit = (obj) =>
-  Object.entries(obj)
-    .filter(([k]) => isTokenKey(k))
-    .map(([k, v]) => `  ${k}: ${v};`)
-    .join("\n");
-
-// Typography: family + per-style scale custom props
-const slug = (s) => s.replace(/[^a-z0-9]+/gi, "-").toLowerCase();
-const typeVars = [`  --font-sans: ${t.typography["font-family"]};`];
-for (const [name, s] of Object.entries(t.typography.scale)) {
-  const id = slug(name);
-  if (s.size) typeVars.push(`  --fs-${id}: ${s.size};`);
-  if (s.weight) typeVars.push(`  --fw-${id}: ${s.weight};`);
-  if (s["line-height"]) typeVars.push(`  --lh-${id}: ${s["line-height"]};`);
-  if (s.tracking) typeVars.push(`  --ls-${id}: ${s.tracking};`);
+// Extract YAML frontmatter
+const match = mdContent.match(/^---\n([\s\S]+?)\n---/);
+if (!match) {
+  throw new Error("Could not find YAML frontmatter in DESIGN.md");
 }
 
-// Spacing scale -> --space-N (parse the numbers out of the prose token)
-const spaceVals = [4, 8, 12, 16, 24, 32, 48, 64, 96, 128];
-const spaceVars = spaceVals.map((n) => `  --space-${n}: ${n}px;`).join("\n");
+const design = yaml.load(match[1]);
 
-// Motion
-const motionVars = [
-  `  --ease-enter: ${m.enter_easing};`,
-  `  --ease-exit: ${m.exit_easing};`,
-  `  --dur-micro-in: 200ms;`,
-  `  --dur-micro-out: 140ms;`,
-  `  --dur-reveal-in: 350ms;`,
-  `  --dur-reveal-out: 140ms;`,
-  `  --dur-layout: 300ms;`,
-  `  --dur-opacity-exception: 80ms;`,
-].join("\n");
-
-const css = `/* AUTO-GENERATED from docs/design/design-guideline.json by scripts/build-tokens.mjs.
-   Do NOT edit by hand. North star: every token earns the word "reliable". */
-
-:root {
-  color-scheme: light dark;
-
-  /* color — light (default) */
-${emit(t.color.light)}
-
-  /* radius */
-${emit(t.radius)}
-
-  /* shadow */
-${emit(t.shadow)}
-
-  /* typography */
-${typeVars.join("\n")}
-
-  /* spacing (8pt grid) */
-${spaceVars}
-
-  /* motion */
-${motionVars}
+// Resolve references like {colors.brand-green}
+function resolveReferences(value, data) {
+  if (typeof value !== "string") return value;
+  return value.replace(/{([a-zA-Z0-9.-]+)}/g, (match, path) => {
+    const parts = path.split(".");
+    let current = data;
+    for (const part of parts) {
+      if (current[part] === undefined) return match;
+      current = current[part];
+    }
+    return current;
+  });
 }
 
-/* Dark via system preference (unless explicitly set to light) */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-${emit(t.color.dark)}
+// Ensure all string values in the design object have references resolved
+function recursivelyResolve(obj, rootData) {
+  for (const key in obj) {
+    if (typeof obj[key] === "string") {
+      obj[key] = resolveReferences(obj[key], rootData);
+    } else if (typeof obj[key] === "object" && obj[key] !== null) {
+      recursivelyResolve(obj[key], rootData);
+    }
   }
 }
+recursivelyResolve(design, design);
 
-/* Dark via explicit toggle */
-:root[data-theme="dark"] {
-${emit(t.color.dark)}
+// Build CSS
+let css = `/* AUTO-GENERATED from DESIGN.md by scripts/build-tokens.mjs. */\n\n:root {\n  color-scheme: light;\n\n`;
+
+// Colors
+css += `  /* Colors */\n`;
+for (const [key, val] of Object.entries(design.colors || {})) {
+  css += `  --color-${key}: ${val};\n`;
 }
 
-/* Light via explicit toggle (override system) */
-:root[data-theme="light"] {
-${emit(t.color.light)}
+// Rounded
+css += `\n  /* Rounded */\n`;
+for (const [key, val] of Object.entries(design.rounded || {})) {
+  css += `  --rounded-${key}: ${val};\n`;
 }
 
-/* Motion is opt-in at the OS level. Under reduced-motion everything is instant,
-   except the single named opacity exception. */
-@media (prefers-reduced-motion: reduce) {
-  :root {
-    --dur-micro-in: 0ms;
-    --dur-micro-out: 0ms;
-    --dur-reveal-in: 0ms;
-    --dur-reveal-out: 0ms;
-    --dur-layout: 0ms;
-    /* --dur-opacity-exception stays 80ms (named exception) */
-  }
+// Spacing
+css += `\n  /* Spacing */\n`;
+for (const [key, val] of Object.entries(design.spacing || {})) {
+  css += `  --spacing-${key}: ${val};\n`;
 }
-`;
+
+// Typography
+css += `\n  /* Typography */\n`;
+for (const [key, styles] of Object.entries(design.typography || {})) {
+  if (styles.fontSize) css += `  --fs-${key}: ${styles.fontSize};\n`;
+  if (styles.fontWeight) css += `  --fw-${key}: ${styles.fontWeight};\n`;
+  if (styles.lineHeight) css += `  --lh-${key}: ${styles.lineHeight};\n`;
+  if (styles.letterSpacing) css += `  --ls-${key}: ${styles.letterSpacing};\n`;
+  if (styles.fontFamily) css += `  --ff-${key}: '${styles.fontFamily}', 'Inter', -apple-system, sans-serif;\n`;
+}
+
+// Add a default font family
+css += `\n  --font-sans: 'Euclid Circular A', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;\n`;
+css += `  --font-mono: 'Source Code Pro', 'SF Mono', Menlo, Consolas, monospace;\n`;
+
+// Adding backward compatible or fixed tokens expected by some components if they are not yet rewritten,
+// but we will rewrite everything, so these are just for basic layout logic if needed.
+css += `\n  /* Legacy/Fallbacks */\n`;
+css += `  --color-surface-0: var(--color-canvas);\n`;
+css += `  --color-surface-1: var(--color-canvas);\n`;
+css += `  --color-text-primary: var(--color-ink);\n`;
+css += `  --color-text-secondary: var(--color-slate);\n`;
+css += `  --color-accent: var(--color-brand-green);\n`;
+css += `  --color-border: var(--color-hairline);\n`;
+
+css += `}\n`;
 
 const out = resolve(root, "public/styles/tokens.css");
 mkdirSync(dirname(out), { recursive: true });

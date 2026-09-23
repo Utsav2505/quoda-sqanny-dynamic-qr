@@ -23,6 +23,7 @@ export const Layout: FC<LayoutProps> = ({ title, description, children }) => (
       <link rel="stylesheet" href="/styles/tokens.css" />
       <link rel="stylesheet" href="/styles/base.css" />
       <link rel="stylesheet" href="/styles/app.css" />
+      <link rel="stylesheet" href="/styles/new-ui.css" />
       <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} />
     </head>
     <body>

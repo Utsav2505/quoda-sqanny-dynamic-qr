@@ -31,7 +31,7 @@ const PLACEHOLDER_DESIGN = {
 // A real, scannable QR pointing at the product — shown before the user types so
 // the hero never renders empty. Built at module-load (deterministic, no I/O).
 const PLACEHOLDER_QR_SVG = renderSvg(
-  encodeMatrix("https://getquoda.com", PLACEHOLDER_DESIGN.ecc),
+  encodeMatrix("https://getsqanny.com", PLACEHOLDER_DESIGN.ecc),
   PLACEHOLDER_DESIGN,
 );
 
@@ -105,23 +105,36 @@ marketing.get("/", (c) =>
       description="Make a QR code in seconds — then make it permanent. Edit where it points anytime; the printed code never changes. Open-source, with scan analytics."
     >
       {/* -------------------------------------------------------------- Hero */}
-      <section class="hero" aria-labelledby="hero-title">
+      <section class="hero hero-band-dark" aria-labelledby="hero-title">
         <div class="hero-copy">
-          <h1 id="hero-title" class="hero-title t-display-hero">
-            The QR code that never breaks.
+          <h1 id="hero-title" class="hero-title t-hero-display text-center" style="margin-bottom: var(--spacing-md)">
+            Sqanny — The QR Code API
           </h1>
-          <p class="hero-lead t-body-lg text-secondary">
-            Type a link, get a code. Make it permanent and change where it points
-            anytime — the printed code stays the same.
+          <p class="hero-lead t-body-lg text-center" style="color: var(--color-on-dark-muted); margin-bottom: var(--spacing-xl)">
+            Generate dynamic QR codes programmatically. Built for developers, trusted by enterprises.
           </p>
         </div>
 
-        {/* The live generator IS the hero. role=form + aria-label per guideline. */}
-        <div
-          class="generator"
-          role="form"
-          aria-label="Live QR generator"
-        >
+        <div class="code-mockup-card" style="max-width: 600px; margin: 0 auto; margin-bottom: var(--spacing-xxl)">
+          <div style="display: flex; justify-content: space-between; margin-bottom: var(--spacing-md)">
+            <span class="t-caption-bold">POST /v1/qr</span>
+            <span class="badge-purple">API Reference</span>
+          </div>
+          <pre class="code-block" style="overflow-x: auto; background-color: var(--color-brand-teal-deep); border: 1px solid var(--color-hairline-dark)">
+<code>{`curl -X POST https://api.sqanny.com/v1/qr \\
+  -H "Authorization: Bearer sq_..." \\
+  -d '{
+    "url": "https://example.com/promo",
+    "design": { "color": "#00ed64" }
+  }'`}</code>
+          </pre>
+          <div style="margin-top: var(--spacing-md); display: flex; justify-content: flex-end">
+            <Button variant="primary" href="/docs">Read the Docs</Button>
+          </div>
+        </div>
+
+        {/* The live generator */}
+        <div class="generator card-feature-dark" role="form" aria-label="Live QR generator" style="max-width: 800px; margin: 0 auto">
           <div class="generator-input">
             <Input
               id="gen-url"
@@ -133,9 +146,9 @@ marketing.get("/", (c) =>
               placeholder="yoursite.com"
               hint="Start typing — your code appears instantly."
             />
-            {/* Brand Match — AI styles the code to the destination's brand. */}
+            {/* Brand Match */}
             <div class="generator-brand" id="gen-brand-wrap" hidden aria-hidden="true">
-              <button type="button" class="btn btn-secondary btn-block" id="gen-brand" data-brand>
+              <button type="button" class="button-secondary-on-dark btn-block" id="gen-brand" data-brand>
                 <span class="btn-icon" aria-hidden="true">
                   <Icon name="sparkles" />
                 </span>
@@ -143,12 +156,12 @@ marketing.get("/", (c) =>
               </button>
               <p class="generator-brand-note t-caption text-tertiary" id="gen-brand-note" role="status" aria-live="polite"></p>
             </div>
-            {/* CTA is hidden until the user types (toggled by the island). */}
+            {/* CTA */}
             <div class="generator-cta" id="gen-cta" hidden aria-hidden="true">
               <Button variant="primary" size="lg" href="/login" block>
                 Make it permanent
               </Button>
-              <p class="generator-cta-note t-caption text-tertiary">
+              <p class="generator-cta-note t-caption" style="color: var(--color-on-dark-muted)">
                 Free account · keeps your code editable forever.
               </p>
             </div>
@@ -156,7 +169,6 @@ marketing.get("/", (c) =>
 
           <div class="generator-preview">
             <figure class="qr-preview qr-preview-hero">
-              {/* QR scannability absolute: dark modules on white always — do not remove for theme consistency. See design-system docs. */}
               <div
                 class="qr-preview-surface"
                 id="gen-preview-surface"
@@ -167,22 +179,23 @@ marketing.get("/", (c) =>
               >
                 {raw(PLACEHOLDER_QR_SVG)}
               </div>
-              <figcaption class="qr-preview-caption t-body-sm text-secondary">
+              <figcaption class="qr-preview-caption t-body-sm" style="color: var(--color-on-dark-muted)">
                 Scannable the moment it appears.
               </figcaption>
             </figure>
             <p
-              class="generator-status t-caption text-tertiary"
+              class="generator-status t-caption"
               id="gen-status"
               role="status"
               aria-live="polite"
+              style="color: var(--color-on-dark-muted)"
             ></p>
           </div>
         </div>
       </section>
 
       {/* --------------------------------------------------- Feature highlights */}
-      <section class="section" aria-labelledby="why-title">
+      <section class="section" style="padding-block: var(--spacing-section-lg)" aria-labelledby="why-title">
         <header class="section-header">
           <h2 id="why-title" class="section-title t-display-lg">
             Built to stay reliable.

@@ -8,6 +8,7 @@ export interface UserRow {
   id: string;
   email: string;
   plan_id: string;
+  role: string;
   onboarded_at: number | null;
   created_at: number;
 }
@@ -92,11 +93,11 @@ export async function createUser(
   const now = Date.now();
   await db
     .prepare(
-      "INSERT INTO users (id, email, plan_id, onboarded_at, created_at) VALUES (?, ?, 'free', NULL, ?)",
+      "INSERT INTO users (id, email, plan_id, role, onboarded_at, created_at) VALUES (?, ?, 'free', 'user', NULL, ?)",
     )
     .bind(id, email, now)
     .run();
-  return { id, email, plan_id: "free", onboarded_at: null, created_at: now };
+  return { id, email, plan_id: "free", role: "user", onboarded_at: null, created_at: now };
 }
 
 export async function getUserByEmail(
@@ -436,4 +437,590 @@ export async function getDynamicPageBySlug(
   const page = await getDynamicPageByQrId(db, qr.id);
   if (!page) return null;
   return { page, qr };
+}
+
+// ---------------------------------------------------------------------------
+// Product QR Management System
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// SKU types and queries
+// ---------------------------------------------------------------------------
+
+export interface SkuRow {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  is_active: number;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface CreateSkuInput {
+  id?: string;
+  code: string;
+  name: string;
+  description?: string | null;
+  created_at?: number;
+  updated_at?: number;
+}
+
+export type SkuPatch = Partial<Pick<SkuRow, "name" | "description" | "is_active">>;
+
+export async function createSku(
+  db: D1Database,
+  input: CreateSkuInput,
+): Promise<SkuRow> {
+  const id = input.id ?? crypto.randomUUID();
+  const now = Date.now();
+  const created_at = input.created_at ?? now;
+  const updated_at = input.updated_at ?? now;
+  await db
+    .prepare(
+      `INSERT INTO skus (id, code, name, description, is_active, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 1, ?, ?)`,
+    )
+    .bind(id, input.code, input.name, input.description ?? null, created_at, updated_at)
+    .run();
+  return {
+    id,
+    code: input.code,
+    name: input.name,
+    description: input.description ?? null,
+    is_active: 1,
+    created_at,
+    updated_at,
+  };
+}
+
+export async function getSkuById(
+  db: D1Database,
+  id: string,
+): Promise<SkuRow | null> {
+  return db
+    .prepare("SELECT * FROM skus WHERE id = ? LIMIT 1")
+    .bind(id)
+    .first<SkuRow>();
+}
+
+export async function getSkuByCode(
+  db: D1Database,
+  code: string,
+): Promise<SkuRow | null> {
+  return db
+    .prepare("SELECT * FROM skus WHERE code = ? LIMIT 1")
+    .bind(code)
+    .first<SkuRow>();
+}
+
+export async function listSkus(
+  db: D1Database,
+): Promise<SkuRow[]> {
+  const { results } = await db
+    .prepare("SELECT * FROM skus ORDER BY created_at DESC")
+    .all<SkuRow>();
+  return results ?? [];
+}
+
+export async function listActiveSkus(
+  db: D1Database,
+): Promise<SkuRow[]> {
+  const { results } = await db
+    .prepare("SELECT * FROM skus WHERE is_active = 1 ORDER BY code ASC")
+    .all<SkuRow>();
+  return results ?? [];
+}
+
+export async function updateSku(
+  db: D1Database,
+  id: string,
+  patch: SkuPatch,
+): Promise<void> {
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) continue;
+    fields.push(`${key} = ?`);
+    values.push(value);
+  }
+  fields.push("updated_at = ?");
+  values.push(Date.now());
+  values.push(id);
+  await db
+    .prepare(`UPDATE skus SET ${fields.join(", ")} WHERE id = ?`)
+    .bind(...values)
+    .run();
+}
+
+export async function deactivateSku(
+  db: D1Database,
+  id: string,
+): Promise<void> {
+  await db
+    .prepare("UPDATE skus SET is_active = 0, updated_at = ? WHERE id = ?")
+    .bind(Date.now(), id)
+    .run();
+}
+
+// ---------------------------------------------------------------------------
+// Batch types and queries
+// ---------------------------------------------------------------------------
+
+export type BatchStatus = "pending" | "generating" | "completed" | "failed";
+
+export interface BatchRow {
+  id: string;
+  batch_number: string;
+  sku_id: string;
+  quantity: number;
+  generated_count: number;
+  status: BatchStatus;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface CreateBatchInput {
+  id?: string;
+  batch_number: string;
+  sku_id: string;
+  quantity: number;
+  generated_count?: number;
+  status?: BatchStatus;
+  created_at?: number;
+  updated_at?: number;
+}
+
+export async function createBatch(
+  db: D1Database,
+  input: CreateBatchInput,
+): Promise<BatchRow> {
+  const id = input.id ?? crypto.randomUUID();
+  const now = Date.now();
+  const created_at = input.created_at ?? now;
+  const updated_at = input.updated_at ?? now;
+  const status = input.status ?? "pending";
+  const generated_count = input.generated_count ?? 0;
+  await db
+    .prepare(
+      `INSERT INTO batches (id, batch_number, sku_id, quantity, generated_count, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(id, input.batch_number, input.sku_id, input.quantity, generated_count, status, created_at, updated_at)
+    .run();
+  return {
+    id,
+    batch_number: input.batch_number,
+    sku_id: input.sku_id,
+    quantity: input.quantity,
+    generated_count,
+    status,
+    created_at,
+    updated_at,
+  };
+}
+
+export async function getBatchById(
+  db: D1Database,
+  id: string,
+): Promise<BatchRow | null> {
+  return db
+    .prepare("SELECT * FROM batches WHERE id = ? LIMIT 1")
+    .bind(id)
+    .first<BatchRow>();
+}
+
+export async function getBatchByNumber(
+  db: D1Database,
+  batchNumber: string,
+): Promise<BatchRow | null> {
+  return db
+    .prepare("SELECT * FROM batches WHERE batch_number = ? LIMIT 1")
+    .bind(batchNumber)
+    .first<BatchRow>();
+}
+
+export async function listBatches(
+  db: D1Database,
+  limit = 25,
+  offset = 0,
+): Promise<BatchRow[]> {
+  const { results } = await db
+    .prepare("SELECT * FROM batches ORDER BY created_at DESC LIMIT ? OFFSET ?")
+    .bind(limit, offset)
+    .all<BatchRow>();
+  return results ?? [];
+}
+
+export async function updateBatchStatus(
+  db: D1Database,
+  id: string,
+  status: BatchStatus,
+  generatedCount?: number,
+): Promise<void> {
+  if (generatedCount !== undefined) {
+    await db
+      .prepare("UPDATE batches SET status = ?, generated_count = ?, updated_at = ? WHERE id = ?")
+      .bind(status, generatedCount, Date.now(), id)
+      .run();
+  } else {
+    await db
+      .prepare("UPDATE batches SET status = ?, updated_at = ? WHERE id = ?")
+      .bind(status, Date.now(), id)
+      .run();
+  }
+}
+
+export async function incrementBatchGeneratedCount(
+  db: D1Database,
+  id: string,
+): Promise<number> {
+  const result = await db
+    .prepare("UPDATE batches SET generated_count = generated_count + 1, updated_at = ? WHERE id = ? RETURNING generated_count")
+    .bind(Date.now(), id)
+    .first<{ generated_count: number }>();
+  return result?.generated_count ?? 0;
+}
+
+// ---------------------------------------------------------------------------
+// Product QR types and queries
+// ---------------------------------------------------------------------------
+
+export type ProductQrStatus = "available" | "claimed" | "active" | "disabled" | "retired";
+
+export interface ProductQrRow {
+  id: string;
+  serial_number: string;
+  short_code: string;
+  sku_id: string;
+  batch_id: string;
+  status: ProductQrStatus;
+  customer_id: string | null;
+  destination: string | null;
+  title: string | null;
+  created_at: number;
+  updated_at: number;
+  claimed_at: number | null;
+  activated_at: number | null;
+}
+
+export interface CreateProductQrInput {
+  id?: string;
+  serial_number: string;
+  short_code: string;
+  sku_id: string;
+  batch_id: string;
+  status?: ProductQrStatus;
+  customer_id?: string | null;
+  destination?: string | null;
+  title?: string | null;
+  created_at?: number;
+  updated_at?: number;
+  claimed_at?: number | null;
+  activated_at?: number | null;
+}
+
+export async function createProductQr(
+  db: D1Database,
+  input: CreateProductQrInput,
+): Promise<ProductQrRow> {
+  const id = input.id ?? crypto.randomUUID();
+  const now = Date.now();
+  const created_at = input.created_at ?? now;
+  const updated_at = input.updated_at ?? now;
+  const status = input.status ?? "available";
+  await db
+    .prepare(
+      `INSERT INTO product_qr (id, serial_number, short_code, sku_id, batch_id, status, customer_id, destination, title, created_at, updated_at, claimed_at, activated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      id,
+      input.serial_number,
+      input.short_code,
+      input.sku_id,
+      input.batch_id,
+      status,
+      input.customer_id ?? null,
+      input.destination ?? null,
+      input.title ?? null,
+      created_at,
+      updated_at,
+      input.claimed_at ?? null,
+      input.activated_at ?? null,
+    )
+    .run();
+  return {
+    id,
+    serial_number: input.serial_number,
+    short_code: input.short_code,
+    sku_id: input.sku_id,
+    batch_id: input.batch_id,
+    status,
+    customer_id: input.customer_id ?? null,
+    destination: input.destination ?? null,
+    title: input.title ?? null,
+    created_at,
+    updated_at,
+    claimed_at: input.claimed_at ?? null,
+    activated_at: input.activated_at ?? null,
+  };
+}
+
+export async function getProductQrById(
+  db: D1Database,
+  id: string,
+): Promise<ProductQrRow | null> {
+  return db
+    .prepare("SELECT * FROM product_qr WHERE id = ? LIMIT 1")
+    .bind(id)
+    .first<ProductQrRow>();
+}
+
+export async function getProductQrBySerial(
+  db: D1Database,
+  serialNumber: string,
+): Promise<ProductQrRow | null> {
+  return db
+    .prepare("SELECT * FROM product_qr WHERE serial_number = ? LIMIT 1")
+    .bind(serialNumber)
+    .first<ProductQrRow>();
+}
+
+export async function getProductQrByShortCode(
+  db: D1Database,
+  shortCode: string,
+): Promise<ProductQrRow | null> {
+  return db
+    .prepare("SELECT * FROM product_qr WHERE short_code = ? LIMIT 1")
+    .bind(shortCode)
+    .first<ProductQrRow>();
+}
+
+export async function listProductQrByBatch(
+  db: D1Database,
+  batchId: string,
+  limit = 25,
+  offset = 0,
+): Promise<ProductQrRow[]> {
+  const { results } = await db
+    .prepare("SELECT * FROM product_qr WHERE batch_id = ? ORDER BY serial_number ASC LIMIT ? OFFSET ?")
+    .bind(batchId, limit, offset)
+    .all<ProductQrRow>();
+  return results ?? [];
+}
+
+export async function listProductQrByCustomer(
+  db: D1Database,
+  customerId: string,
+): Promise<ProductQrRow[]> {
+  const { results } = await db
+    .prepare("SELECT * FROM product_qr WHERE customer_id = ? ORDER BY claimed_at DESC")
+    .bind(customerId)
+    .all<ProductQrRow>();
+  return results ?? [];
+}
+
+export async function claimProductQr(
+  db: D1Database,
+  shortCode: string,
+  customerId: string,
+): Promise<ProductQrRow | null> {
+  const now = Date.now();
+  const result = await db
+    .prepare(
+      `UPDATE product_qr
+       SET status = 'claimed', customer_id = ?, claimed_at = ?, updated_at = ?
+       WHERE short_code = ? AND status = 'available'
+       RETURNING *`,
+    )
+    .bind(customerId, now, now, shortCode)
+    .first<ProductQrRow>();
+  return result ?? null;
+}
+
+export async function activateProductQr(
+  db: D1Database,
+  id: string,
+  customerId: string,
+  destination: string,
+): Promise<boolean> {
+  const now = Date.now();
+  const result = await db
+    .prepare(
+      `UPDATE product_qr
+       SET status = 'active', destination = ?, activated_at = ?, updated_at = ?
+       WHERE id = ? AND customer_id = ? AND status = 'claimed'`,
+    )
+    .bind(destination, now, now, id, customerId)
+    .run();
+  return result.meta.changes === 1;
+}
+
+export async function updateProductQrStatus(
+  db: D1Database,
+  id: string,
+  status: ProductQrStatus,
+): Promise<boolean> {
+  const now = Date.now();
+  const result = await db
+    .prepare("UPDATE product_qr SET status = ?, updated_at = ? WHERE id = ?")
+    .bind(status, now, id)
+    .run();
+  return result.meta.changes === 1;
+}
+
+export async function updateProductQrDestination(
+  db: D1Database,
+  id: string,
+  customerId: string,
+  destination: string,
+): Promise<boolean> {
+  const now = Date.now();
+  const result = await db
+    .prepare(
+      `UPDATE product_qr
+       SET destination = ?, updated_at = ?
+       WHERE id = ? AND customer_id = ? AND status IN ('claimed', 'active')`,
+    )
+    .bind(destination, now, id, customerId)
+    .run();
+  return result.meta.changes === 1;
+}
+
+export async function countProductQrByStatus(
+  db: D1Database,
+): Promise<Record<ProductQrStatus, number>> {
+  const { results } = await db
+    .prepare("SELECT status, COUNT(*) as count FROM product_qr GROUP BY status")
+    .all<{ status: ProductQrStatus; count: number }>();
+  const counts: Record<ProductQrStatus, number> = {
+    available: 0,
+    claimed: 0,
+    active: 0,
+    disabled: 0,
+    retired: 0,
+  };
+  for (const row of results ?? []) {
+    counts[row.status] = row.count;
+  }
+  return counts;
+}
+
+export async function countCustomers(
+  db: D1Database,
+): Promise<number> {
+  const row = await db
+    .prepare("SELECT COUNT(DISTINCT customer_id) as count FROM product_qr WHERE customer_id IS NOT NULL")
+    .first<{ count: number }>();
+  return row?.count ?? 0;
+}
+
+// ---------------------------------------------------------------------------
+// Audit log types and queries
+// ---------------------------------------------------------------------------
+
+export interface AuditLogRow {
+  id: string;
+  actor_id: string;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  details_json: string | null;
+  ip_address: string | null;
+  created_at: number;
+}
+
+export interface CreateAuditLogInput {
+  id?: string;
+  actor_id: string;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  details_json?: string | null;
+  ip_address?: string | null;
+  created_at?: number;
+}
+
+export async function createAuditLog(
+  db: D1Database,
+  input: CreateAuditLogInput,
+): Promise<AuditLogRow> {
+  const id = input.id ?? crypto.randomUUID();
+  const now = Date.now();
+  const created_at = input.created_at ?? now;
+  await db
+    .prepare(
+      `INSERT INTO audit_log (id, actor_id, action, entity_type, entity_id, details_json, ip_address, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(id, input.actor_id, input.action, input.entity_type, input.entity_id, input.details_json ?? null, input.ip_address ?? null, created_at)
+    .run();
+  return {
+    id,
+    actor_id: input.actor_id,
+    action: input.action,
+    entity_type: input.entity_type,
+    entity_id: input.entity_id,
+    details_json: input.details_json ?? null,
+    ip_address: input.ip_address ?? null,
+    created_at,
+  };
+}
+
+export async function listAuditLogs(
+  db: D1Database,
+  limit = 25,
+  offset = 0,
+): Promise<AuditLogRow[]> {
+  const { results } = await db
+    .prepare("SELECT * FROM audit_log ORDER BY created_at DESC LIMIT ? OFFSET ?")
+    .bind(limit, offset)
+    .all<AuditLogRow>();
+  return results ?? [];
+}
+
+// ---------------------------------------------------------------------------
+// Short code lookup types and queries
+// ---------------------------------------------------------------------------
+
+export interface ShortCodeLookupRow {
+  short_code: string;
+  source: string;
+  source_id: string;
+  created_at: number;
+}
+
+export async function createShortCodeLookup(
+  db: D1Database,
+  input: { short_code: string; source: string; source_id: string; created_at?: number },
+): Promise<ShortCodeLookupRow> {
+  const created_at = input.created_at ?? Date.now();
+  await db
+    .prepare(
+      "INSERT INTO short_code_lookup (short_code, source, source_id, created_at) VALUES (?, ?, ?, ?)",
+    )
+    .bind(input.short_code, input.source, input.source_id, created_at)
+    .run();
+  return { short_code: input.short_code, source: input.source, source_id: input.source_id, created_at };
+}
+
+export async function lookupShortCode(
+  db: D1Database,
+  shortCode: string,
+): Promise<ShortCodeLookupRow | null> {
+  return db
+    .prepare("SELECT * FROM short_code_lookup WHERE short_code = ? LIMIT 1")
+    .bind(shortCode)
+    .first<ShortCodeLookupRow>();
+}
+
+export async function deleteShortCodeLookup(
+  db: D1Database,
+  shortCode: string,
+): Promise<void> {
+  await db
+    .prepare("DELETE FROM short_code_lookup WHERE short_code = ?")
+    .bind(shortCode)
+    .run();
 }

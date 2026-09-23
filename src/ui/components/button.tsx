@@ -50,10 +50,8 @@ export const Button: FC<PropsWithChildren<ButtonProps>> = ({
   // Forward any extra data-*/aria-* attributes (island hooks) to the element.
   const passthrough = rest as Record<string, string | boolean | undefined>;
   const classes = [
-    "btn",
-    `btn-${variant}`,
-    size === "lg" ? "btn-lg" : null,
-    block ? "btn-block" : null,
+    `button-${variant}`,
+    block ? "btn-block" : null, // btn-block remains as it's a layout helper in app.css
     cls,
   ]
     .filter(Boolean)

@@ -1,6 +1,8 @@
 import type { FC, PropsWithChildren, Child } from "hono/jsx";
 
 export interface CardProps {
+  /** card style variant */
+  variant?: "base" | "feature" | "feature-dark" | "product-deploy" | "course" | "cert" | "pricing" | "pricing-featured";
   /** optional title rendered as a heading-sm */
   title?: string;
   /** optional secondary line under the title */
@@ -16,11 +18,8 @@ export interface CardProps {
   class?: string;
 }
 
-/**
- * Card — surface-1 panel with radius-lg + shadow-md, per the QR-card resting
- * elevation in the guideline. Header (title/subtitle/actions) is optional.
- */
 export const Card: FC<PropsWithChildren<CardProps>> = ({
+  variant = "base",
   title,
   subtitle,
   actions,
@@ -30,7 +29,11 @@ export const Card: FC<PropsWithChildren<CardProps>> = ({
   class: cls,
   children,
 }) => {
-  const classes = ["card", interactive ? "card-interactive" : null, cls]
+  const classes = [
+    variant === "pricing-featured" ? "pricing-card-featured" : (variant.startsWith("pricing") ? "pricing-card" : `card-${variant}`),
+    interactive ? "card-interactive" : null,
+    cls
+  ]
     .filter(Boolean)
     .join(" ");
 

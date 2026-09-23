@@ -29,9 +29,9 @@ const AuthShell: FC<
           <span class="auth-brandmark" aria-hidden="true">
             <Icon name="qr" size={22} />
           </span>
-          <span class="auth-wordmark">quoda</span>
+          <span class="auth-wordmark">sqanny</span>
         </a>
-        <div class="auth-card">
+        <div class="card-base" style="max-width: 400px; width: 100%; margin: 0 auto">
           {icon ? (
             <span class="auth-card-icon" aria-hidden="true">
               {icon}

@@ -56,7 +56,7 @@ export const Input: FC<InputProps> = ({
         ) : null}
       </label>
       <input
-        class={error ? "input input-error" : "input"}
+        class={error ? "text-input input-error" : "text-input"}
         id={id}
         name={name ?? id}
         type={type}

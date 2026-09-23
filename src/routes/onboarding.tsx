@@ -149,7 +149,7 @@ const FieldRow: FC<{ choiceType: QrType; spec: FieldSpec }> = ({ choiceType, spe
         ) : null}
       </label>
       <input
-        class="input"
+        class="text-input"
         id={id}
         type={spec.type ?? "text"}
         placeholder={spec.placeholder}
@@ -256,7 +256,7 @@ onboarding.get("/onboarding", (c) => {
                     Give it a name
                   </label>
                   <input
-                    class="input"
+                    class="text-input"
                     id="ob-title"
                     name="title"
                     type="text"

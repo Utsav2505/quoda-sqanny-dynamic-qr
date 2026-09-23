@@ -59,7 +59,7 @@ settings.get("/app/settings", async (c) => {
         {/* Plan */}
         <Card
           title="Plan"
-          actions={<Badge tone="accent">{planName(user.plan_id)}</Badge>}
+          actions={<Badge tone="green">{planName(user.plan_id)}</Badge>}
         >
           <dl class="settings-defs">
             <div class="settings-def">
