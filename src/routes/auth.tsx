@@ -123,7 +123,7 @@ auth.post("/login", async (c) => {
     );
   }
 
-  await issueMagicLink(c.env, email);
+  await issueMagicLink(c.env, email, c.req.query("next"));
 
   // In local dev (no RESEND key) the link is printed to the server console by
   // sendMagicLink — tell the developer so they can grab it without an inbox.
@@ -188,7 +188,15 @@ auth.get("/auth/verify", async (c) => {
   c.header("Set-Cookie", setCookie);
 
   const user = await getUserById(c.env.DB, result.userId);
-  const destination = user && user.onboarded_at === null ? "/onboarding" : "/app";
+  // A captured return path wins, but only for a user who has finished
+  // onboarding — otherwise the "next" would drop them into a page that assumes
+  // a completed profile.
+  const onboarded = !user || user.onboarded_at !== null;
+  const destination = result.nextPath && onboarded
+    ? result.nextPath
+    : user && user.onboarded_at === null
+      ? "/onboarding"
+      : "/app";
   return c.redirect(destination, 302);
 });
 

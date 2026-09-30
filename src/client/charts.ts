@@ -1,11 +1,20 @@
 // Charts island — fetches analytics and renders a daily line chart + country/
-// device bars as inline SVG, token-colored via currentColor. Dependency-free.
+// device/os/browser/language bars as inline SVG, token-colored via currentColor.
+// Dependency-free.
 
 interface AnalyticsResponse {
   ok: boolean;
   total: number;
   daily: Array<{ day: string; count: number }>;
-  breakdown: { country: Record<string, number>; device: Record<string, number> };
+  breakdown: {
+    country: Record<string, number>;
+    device: Record<string, number>;
+    os?: Record<string, number>;
+    browser?: Record<string, number>;
+    language?: Record<string, number>;
+    city?: Array<{ name: string; count: number }>;
+  };
+  uniques?: { total: number; daily: Array<{ day: string; count: number }> };
   error?: string;
 }
 
@@ -26,6 +35,35 @@ function init(): void {
   void load(qrId, root);
   wireDestinationEdit(qrId, root);
   wireDelete(qrId, root);
+  wireCopy(root);
+}
+
+// --- Copy the permanent printed URL -----------------------------------------
+
+/**
+ * The printed URL is the thing an owner needs when they are holding a physical
+ * label and wondering which dashboard entry it belongs to. Copying it beats
+ * transcribing it, so wire it up without requiring a library.
+ */
+function wireCopy(root: HTMLElement): void {
+  const btn = root.querySelector<HTMLElement>("[data-copy]");
+  if (!btn) return;
+  const original = btn.textContent ?? "";
+
+  btn.addEventListener("click", async () => {
+    const value = btn.getAttribute("data-copy") ?? "";
+    try {
+      await navigator.clipboard.writeText(value);
+      btn.textContent = "Copied";
+    } catch {
+      // Clipboard can be blocked (insecure context, denied permission). Say so
+      // rather than silently doing nothing.
+      btn.textContent = "Press ⌘C";
+    }
+    window.setTimeout(() => {
+      btn.textContent = original;
+    }, 2000);
+  });
 }
 
 // --- Inline destination edit (dynamic codes) -------------------------------
@@ -115,8 +153,12 @@ async function load(qrId: string, root: HTMLElement): Promise<void> {
   }
 
   renderDaily(root.querySelector<HTMLElement>('[data-chart="daily"]'), data.daily);
-  renderBars(root.querySelector<HTMLElement>('[data-chart="country"]'), data.breakdown.country, true);
-  renderBars(root.querySelector<HTMLElement>('[data-chart="device"]'), data.breakdown.device, false);
+  renderBars(root.querySelector<HTMLElement>('[data-chart="country"]'), data.breakdown.country, "country");
+  renderBars(root.querySelector<HTMLElement>('[data-chart="device"]'), data.breakdown.device, "plain");
+  renderBars(root.querySelector<HTMLElement>('[data-chart="os"]'), data.breakdown.os ?? {}, "plain");
+  renderBars(root.querySelector<HTMLElement>('[data-chart="browser"]'), data.breakdown.browser ?? {}, "plain");
+  renderBars(root.querySelector<HTMLElement>('[data-chart="language"]'), data.breakdown.language ?? {}, "plain");
+  renderCity(root.querySelector<HTMLElement>('[data-chart="city"]'), data.breakdown.city ?? []);
 }
 
 function markError(root: HTMLElement, msg: string): void {
@@ -215,18 +257,29 @@ const COUNTRY_NAMES: Record<string, string> = {
   BR: "Brazil", ES: "Spain", IT: "Italy", NL: "Netherlands",
 };
 
-function labelFor(key: string, isCountry: boolean): string {
+function labelFor(key: string, kind: "country" | "plain"): string {
   if (key === "unknown" || key === "") return "Unknown";
-  if (isCountry) return COUNTRY_NAMES[key] ?? key;
+  if (kind === "country") return COUNTRY_NAMES[key] ?? key;
+  // Only title-case values that arrive entirely lowercased. Device dimensions
+  // are a mix of "mobile"/"android" and "iOS"/"macOS"/"Chrome OS", and blindly
+  // capitalising would render "iOS" as "IOS" and "macOS" as "MacOS".
+  if (key !== key.toLowerCase()) return key;
   return key.charAt(0).toUpperCase() + key.slice(1);
 }
 
-function renderBars(host: HTMLElement | null, map: Record<string, number>, isCountry: boolean): void {
+function renderBars(
+  host: HTMLElement | null,
+  map: Record<string, number>,
+  kind: "country" | "plain",
+): void {
   if (!host) return;
   const empty = host.querySelector<HTMLElement>("[data-chart-empty]");
   const entries = Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 6);
   if (!entries.length) {
-    if (empty) empty.hidden = false;
+    if (empty) {
+      empty.textContent = "No data yet.";
+      empty.hidden = false;
+    }
     return;
   }
   if (empty) empty.hidden = true;
@@ -237,11 +290,25 @@ function renderBars(host: HTMLElement | null, map: Record<string, number>, isCou
     row.className = "qr-bar-row";
     const pct = Math.round((value / max) * 100);
     row.innerHTML =
-      `<span class="qr-bar-label t-body-sm">${escapeHtml(labelFor(key, isCountry))}</span>` +
+      `<span class="qr-bar-label t-body-sm">${escapeHtml(labelFor(key, kind))}</span>` +
       `<span class="qr-bar-track"><span class="qr-bar-fill" style="width:${pct}%"></span></span>` +
       `<span class="qr-bar-value t-body-sm tnum">${value}</span>`;
     host.appendChild(row);
   }
+}
+
+/**
+ * Top cities. Rendered through the same bar idiom as every other dimension —
+ * cities are unbounded in cardinality but the server already caps them at six.
+ */
+function renderCity(
+  host: HTMLElement | null,
+  cities: Array<{ name: string; count: number }>,
+): void {
+  if (!host) return;
+  const map: Record<string, number> = {};
+  for (const c of cities) map[c.name] = c.count;
+  renderBars(host, map, "plain");
 }
 
 function escapeHtml(s: string): string {

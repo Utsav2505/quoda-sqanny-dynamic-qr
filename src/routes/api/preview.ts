@@ -13,8 +13,15 @@ export const previewApi = new Hono<{ Bindings: Bindings }>();
 // Rate-limited per client IP via the RATE_LIMIT KV so the open tool can't be
 // abused as a free render farm.
 
-/** Requests allowed per IP per fixed window. */
-const RATE_LIMIT_MAX = 60;
+/**
+ * Requests allowed per IP per fixed window.
+ *
+ * Exported so the rate-limit test can assert against the real budget instead of
+ * hardcoding a number that drifts whenever this is retuned. Raised from 60
+ * because the studio's live preview now actually works, and a 350ms debounce
+ * over a long typing burst exceeds 60/min on its own.
+ */
+export const RATE_LIMIT_MAX = 300;
 /** Fixed window length in seconds. */
 const RATE_WINDOW_SECONDS = 60;
 
@@ -34,12 +41,23 @@ interface PreviewBody {
   type?: unknown;
   fields?: unknown;
   design?: unknown;
+  /** True when the code is dynamic. */
+  isDynamic?: unknown;
+  /**
+   * The code's permanent short code. When supplied for a dynamic code the
+   * preview renders the ACTUAL printed payload (/r/<code>) instead of the
+   * content, so the studio shows exactly the image that gets printed.
+   */
+  shortCode?: unknown;
 }
 
 const KNOWN_TYPES: ReadonlySet<QrType> = new Set<QrType>([
   "url", "text", "wifi", "email", "tel", "sms", "vcard",
   "pdf", "menu", "business", "appstore", "social",
 ]);
+
+/** Short codes are base62 and 4–32 chars; anything else is not one we issued. */
+const SHORT_CODE_RE = /^[0-9A-Za-z]{4,32}$/;
 
 /** Best-effort client IP for rate-limit bucketing. */
 function clientIp(req: Request): string {
@@ -121,13 +139,29 @@ previewApi.post("/api/preview", async (c) => {
   const fields = toFields(body.fields);
   const design = safePalette(resolveDesign(body.design));
 
+  // A dynamic code's printed image encodes its permanent redirect, NOT its
+  // content. Rendering the content here is what made the studio show a code
+  // that differed from the one actually on the label.
+  const wantsDynamic = body.isDynamic === true;
+  const shortCode = typeof body.shortCode === "string" ? body.shortCode : "";
+  const isDynamicCode = wantsDynamic && SHORT_CODE_RE.test(shortCode);
+
   let payload: string;
-  try {
-    payload = buildPayload(type, fields);
-  } catch {
-    // Missing/empty required field for this type — not an error the user needs
-    // to see as a crash; surface a clean 400 the island can ignore silently.
-    return c.json({ error: "incomplete" }, 400);
+  if (isDynamicCode) {
+    payload = `${c.env.APP_URL}/r/${shortCode}`;
+  } else if (wantsDynamic && !shortCode) {
+    // Create mode for a code that defers its destination: there is no code and
+    // no URL to encode yet. Say so explicitly rather than rendering a QR for an
+    // empty string, which would look like a real (broken) code.
+    return c.json({ error: "no_code_yet" }, 400);
+  } else {
+    try {
+      payload = buildPayload(type, fields);
+    } catch {
+      // Missing/empty required field for this type — not an error the user needs
+      // to see as a crash; surface a clean 400 the island can ignore silently.
+      return c.json({ error: "incomplete" }, 400);
+    }
   }
 
   let svg: string;
@@ -138,5 +172,5 @@ previewApi.post("/api/preview", async (c) => {
     return c.json({ error: "encode_failed" }, 400);
   }
 
-  return c.json({ svg });
+  return c.json({ svg, payload });
 });

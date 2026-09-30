@@ -4,6 +4,8 @@ import type { FC, Child } from "hono/jsx";
 import type { Bindings } from "../types";
 import type { DynamicPageKind, DynamicPageRow, QrRow } from "../db/queries";
 import { getDynamicPageBySlug } from "../db/queries";
+import { readCookie } from "../lib/auth/session";
+import { SCAN_COOKIE } from "../lib/analytics";
 import { Layout } from "../ui/layout";
 import { Icon } from "../ui/icons";
 import type { IconName } from "../ui/icons";
@@ -380,11 +382,18 @@ pages.get("/p/:slug", async (c) => {
   }
   const { page, qr }: { page: DynamicPageRow; qr: QrRow } = found;
 
+  // Ship the enrichment script ONLY when this request carries a fresh scan
+  // correlation cookie. The cookie is HttpOnly, so the script cannot know this
+  // itself — deciding here means an ordinary page view loads no tracker and
+  // fires no request.
+  const scanned = Boolean(readCookie(c.req.raw, SCAN_COOKIE));
+
   return c.html(
     <>
       {raw("<!DOCTYPE html>")}
       <Layout title={pageTitle(page.kind, page.data_json, qr)} bare>
         <PageShell>{renderKind(page.kind, page.data_json, qr, slug)}</PageShell>
+        {scanned ? <script src="/js/enrich.js" defer /> : null}
       </Layout>
     </>,
   );

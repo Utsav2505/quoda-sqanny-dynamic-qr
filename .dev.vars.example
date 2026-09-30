@@ -10,3 +10,16 @@ FAL_KEY=
 
 # Public URL used in magic links and QR redirect targets.
 APP_URL=http://localhost:8787
+
+# HMAC key used to pseudonymise scan IP addresses (see src/lib/iphash.ts).
+# Set any random string locally. In production set it as a Worker secret:
+#   npx wrangler secret put SCAN_HASH_SECRET
+# If unset, scans are logged WITHOUT an ip_hash — unique-visitor counts are
+# disabled. A raw IP is never stored either way.
+SCAN_HASH_SECRET=
+
+# Debug: log the raw client IP + parsed dimensions to the console on each scan.
+# OFF by default and it should stay that way in production — console output is
+# retained by Cloudflare when observability is enabled, which would quietly
+# become a second store of raw addresses. Enable locally to debug.
+# SCAN_LOG_IP=1

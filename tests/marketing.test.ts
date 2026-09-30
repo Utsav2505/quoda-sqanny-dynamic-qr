@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { describe, it, expect } from "vitest";
 import { marketing } from "../src/routes/marketing";
-import { previewApi } from "../src/routes/api/preview";
+import { previewApi, RATE_LIMIT_MAX } from "../src/routes/api/preview";
 
 // Minimal ExecutionContext for app.fetch.
 const ctx = {
@@ -135,15 +135,102 @@ describe("POST /api/preview", () => {
         ctx,
       );
 
-    // The cap is 60/min. Sequential (KV RMW) so the counter is consistent.
+    // Uses the real exported budget rather than a hardcoded number, so retuning
+    // the cap does not silently turn this into a test that asserts nothing.
+    // Sequential (KV read-modify-write) so the counter stays consistent.
+    //
+    // This is ~300 round trips, so it needs a real timeout: the default 5s is
+    // not enough and the failure looks like a flake rather than a slow test.
     const statuses: number[] = [];
-    for (let i = 0; i < 61; i++) {
+    for (let i = 0; i < RATE_LIMIT_MAX + 1; i++) {
       const res = await make();
       statuses.push(res.status);
     }
 
-    // First 60 succeed, the 61st is rate-limited.
-    expect(statuses.slice(0, 60).every((s) => s === 200)).toBe(true);
-    expect(statuses[60]).toBe(429);
+    // Everything inside the budget is allowed; the next one is refused.
+    expect(statuses.slice(0, RATE_LIMIT_MAX).every((s) => s === 200)).toBe(true);
+    expect(statuses[RATE_LIMIT_MAX]).toBe(429);
+  }, 30_000);
+});
+
+describe("POST /api/preview — dynamic vs static payload", () => {
+  // Unique IP per test so the rate-limit window is isolated.
+  let n = 0;
+  const post = (body: Record<string, unknown>) =>
+    previewApi.fetch(
+      new Request("http://x/api/preview", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "cf-connecting-ip": `7.7.7.${(n = (n + 1) % 250) + 1}`,
+        },
+        body: JSON.stringify(body),
+      }),
+      env,
+      ctx,
+    );
+
+  it("encodes the redirect URL for a dynamic code, not its destination", async () => {
+    const res = await post({
+      type: "url",
+      isDynamic: true,
+      shortCode: "abc123",
+      fields: { url: "https://example.com/menu" },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { svg: string; payload: string };
+    // The whole point: what the studio shows must be what gets printed.
+    expect(body.payload).toBe(`${env.APP_URL}/r/abc123`);
+    expect(body.payload).not.toContain("example.com");
+    expect(body.svg).toBeTruthy();
+  });
+
+  it("returns the same payload regardless of the destination", async () => {
+    const a = await post({ type: "url", isDynamic: true, shortCode: "same01", fields: { url: "https://one.test" } });
+    const b = await post({ type: "url", isDynamic: true, shortCode: "same01", fields: { url: "https://two.test/different" } });
+    const pa = ((await a.json()) as { payload: string }).payload;
+    const pb = ((await b.json()) as { payload: string }).payload;
+    // This is the regression the user reported: retargeting must not change
+    // the printed code.
+    expect(pa).toBe(pb);
+  });
+
+  it("encodes the content for a static code", async () => {
+    const res = await post({
+      type: "url",
+      isDynamic: false,
+      shortCode: "abc123",
+      fields: { url: "https://example.com/menu" },
+    });
+    const body = (await res.json()) as { payload: string };
+    expect(body.payload).toBe("https://example.com/menu");
+  });
+
+  it("falls back to the content for a malformed short code", async () => {
+    const res = await post({
+      type: "url",
+      isDynamic: true,
+      shortCode: "../../evil",
+      fields: { url: "https://example.com" },
+    });
+    const body = (await res.json()) as { payload: string };
+    // Never interpolates an unvalidated code into the payload.
+    expect(body.payload).toBe("https://example.com");
+  });
+
+  it("reports no_code_yet for a dynamic code with nothing to render", async () => {
+    const res = await post({
+      type: "url",
+      isDynamic: true,
+      fields: { url: "" },
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe("no_code_yet");
+  });
+
+  it("still reports incomplete for a static code missing its field", async () => {
+    const res = await post({ type: "url", isDynamic: false, fields: {} });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe("incomplete");
   });
 });

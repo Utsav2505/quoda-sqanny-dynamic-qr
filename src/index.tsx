@@ -20,6 +20,7 @@ import { studio } from "./routes/studio";
 import { qrDetail } from "./routes/qr-detail";
 import { qrApi } from "./routes/api/qr";
 import { analyticsApi } from "./routes/api/analytics";
+import { enrichApi } from "./routes/api/enrich";
 import { uploadApi } from "./routes/api/upload";
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -42,6 +43,7 @@ app.route("/", brandApi); // POST /api/brand (AI Brand Match)
 app.route("/", wallpaperApi); // POST /api/wallpaper (AI QR Wallpaper)
 app.route("/", qrApi); // /api/qr*
 app.route("/", analyticsApi); // /api/qr/:id/analytics
+app.route("/", enrichApi); // POST /api/enrich (public, cookie-correlated)
 app.route("/", uploadApi); // POST /api/upload, GET /assets/:key
 
 // --- Auth + onboarding ---

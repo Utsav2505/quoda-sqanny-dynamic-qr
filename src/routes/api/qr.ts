@@ -262,7 +262,9 @@ qrApi.post("/api/qr", async (c) => {
   try {
     if (wantDynamic) {
       const short_code = await ensureUniqueShortCode(c.env.DB);
-      let destination: string;
+      // NULL means "deferred": the printed code is live but has nowhere to send
+      // anyone yet, so /r/<code> renders the claim page instead of a 302.
+      let destination: string | null;
       let dynamicKind: DynamicPageKind | null = null;
 
       if (rich) {
@@ -270,11 +272,9 @@ qrApi.post("/api/qr", async (c) => {
         destination = `${c.env.APP_URL}/p/${short_code}`;
         dynamicKind = type as DynamicPageKind;
       } else {
-        // Plain dynamic: redirect to the user's target.
-        destination = normalizeUrl((body.destination ?? "").trim() || (fields.url ?? "").trim());
-        if (!destination) {
-          return c.json({ ok: false, error: "A destination URL is required for dynamic codes." }, 400);
-        }
+        // Plain dynamic: redirect to the user's target. An empty value is the
+        // studio's "set the destination later" signal, not an error.
+        destination = normalizeUrl((body.destination ?? "").trim() || (fields.url ?? "").trim()) || null;
       }
 
       // Validate the printed image encodes (the /r/<code> redirect).

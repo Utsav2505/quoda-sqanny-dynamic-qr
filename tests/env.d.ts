@@ -9,6 +9,7 @@ declare module "cloudflare:test" {
     ASSETS_BUCKET: R2Bucket;
     APP_URL: string;
     RESEND_API_KEY?: string;
+    SCAN_HASH_SECRET?: string;
     TEST_MIGRATIONS: D1Migration[];
   }
 }

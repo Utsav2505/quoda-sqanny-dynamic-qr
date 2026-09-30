@@ -4,7 +4,13 @@ import type { AppEnv } from "../middleware/auth";
 import { requireAuth } from "../middleware/auth";
 import { getQrById, type QrRow } from "../db/queries";
 import type { QrDesign, QrFields } from "../lib/qr/types";
-import { getTotals, getBreakdown } from "../lib/analytics";
+import {
+  getTotals,
+  getBreakdown,
+  getUniques,
+  getScans,
+  type ScanDetail,
+} from "../lib/analytics";
 import { encodeMatrix } from "../lib/qr/encoder";
 import { renderSvg } from "../lib/qr/render-svg";
 import { safePalette } from "../lib/qr/scannability";
@@ -64,13 +70,24 @@ interface DetailViewProps {
   total: number;
   topCountry: { name: string; count: number } | null;
   topDevice: { name: string; count: number } | null;
+  /** Distinct-scanner floor for the last 30 days, or null when no hash secret
+   *  is configured (ip_hash is never stored in that case). */
+  uniques: number | null;
+  /** Individual scans, newest first, for the raw scan log. */
+  scans: ScanDetail[];
+  /** True when a full page was returned and older rows exist. */
+  scansTruncated: boolean;
   qrSvg: string;
   printedUrl: string | null;
   analyticsError?: boolean;
 }
 
-const DetailView: FC<DetailViewProps> = ({ qr, total, topCountry, topDevice, qrSvg, printedUrl, analyticsError }) => {
+const DetailView: FC<DetailViewProps> = ({ qr, total, topCountry, topDevice, uniques, scans, scansTruncated, qrSvg, printedUrl, analyticsError }) => {
   const dynamic = qr.is_dynamic === 1;
+  // A dynamic code with no destination is live but not yet going anywhere.
+  // Rich/hosted types always carry a /p/ destination, so this never fires for
+  // them and their "destination is managed" copy stays accurate.
+  const unclaimed = dynamic && !qr.destination;
   return (
     <div class="qr-detail" data-qr-id={qr.id} data-dynamic={dynamic ? "true" : "false"}>
       <nav class="qr-detail-breadcrumb">
@@ -113,8 +130,33 @@ const DetailView: FC<DetailViewProps> = ({ qr, total, topCountry, topDevice, qrS
             {dynamic ? (
               <>
                 {printedUrl ? (
-                  <p class="qr-detail-printed t-body-sm text-secondary">
-                    Printed code points to <span class="qr-detail-mono">{printedUrl}</span> — editing the destination never reprints it.
+                  <div class="qr-detail-printed">
+                    <span class="field-label">Printed code points to</span>
+                    <div class="qr-detail-printed-row">
+                      <code class="qr-detail-mono">{printedUrl}</code>
+                      <Button
+                        variant="ghost"
+                        class="qr-detail-copy"
+                        data-copy={printedUrl}
+                        iconLeft={<Icon name="copy" size={14} />}
+                      >
+                        Copy
+                      </Button>
+                    </div>
+                    <p class="field-hint">
+                      This never changes. Reprinting is only needed to restyle the
+                      image — the destination below can be changed at any time.
+                    </p>
+                  </div>
+                ) : null}
+                {unclaimed ? (
+                  <p class="qr-detail-unclaimed" role="status">
+                    <Icon name="close" size={16} />
+                    <span>
+                      <strong>No destination set yet.</strong> Anyone who scans this
+                      code right now lands on a page offering to set one. Set it
+                      below and the printed code starts working — no reprinting.
+                    </span>
                   </p>
                 ) : null}
                 {qr.type === "pdf" || ["menu", "business", "appstore", "social"].includes(qr.type) ? (
@@ -123,10 +165,22 @@ const DetailView: FC<DetailViewProps> = ({ qr, total, topCountry, topDevice, qrS
                   </p>
                 ) : (
                   <form class="qr-detail-dest-form" data-dest-form>
-                    <label class="field-label" for="dest-input">Current target</label>
+                    <label class="field-label" for="dest-input">
+                      {unclaimed ? "Set the destination" : "Current target"}
+                    </label>
                     <div class="qr-detail-dest-row">
-                      <input class="input" id="dest-input" type="url" data-dest-input value={qr.destination ?? ""} />
-                      <Button variant="primary" class="qr-detail-dest-save" data-dest-save>Update</Button>
+                      <input
+                        class="input"
+                        id="dest-input"
+                        type="url"
+                        inputMode="url"
+                        placeholder="https://example.com"
+                        data-dest-input
+                        value={qr.destination ?? ""}
+                      />
+                      <Button variant="primary" class="qr-detail-dest-save" data-dest-save>
+                        {unclaimed ? "Set" : "Update"}
+                      </Button>
                     </div>
                     <p class="field-hint" data-dest-status hidden role="status"></p>
                   </form>
@@ -152,6 +206,16 @@ const DetailView: FC<DetailViewProps> = ({ qr, total, topCountry, topDevice, qrS
             <Stat label="Total scans" value={String(total)} icon={<Icon name="chart" size={18} />} />
             <Stat label="Top country" value={topCountry ? topCountry.name : "—"} unit={topCountry ? `${topCountry.count}` : undefined} />
             <Stat label="Top device" value={topDevice ? capitalize(topDevice.name) : "—"} unit={topDevice ? `${topDevice.count}` : undefined} />
+            {/* Unique scanners, last 30 days. The hash salt rotates daily, so
+                this is a floor, not an exact lifetime count. Omitted entirely
+                when no SCAN_HASH_SECRET is configured. */}
+            {uniques !== null ? (
+              <Stat
+                label="Avg. unique scanners"
+                value={String(uniques)}
+                unit="per active day"
+              />
+            ) : null}
           </div>
 
           <div class="card qr-detail-chart-card">
@@ -166,8 +230,13 @@ const DetailView: FC<DetailViewProps> = ({ qr, total, topCountry, topDevice, qrS
 
           <div class="qr-detail-breakdowns">
             <div class="card">
-              <h3 class="t-heading-sm">By country</h3>
-              <div class="qr-bars" data-chart="country">
+              <h3 class="t-heading-sm">By country</h3>              <div class="qr-bars" data-chart="country">
+                <p class="qr-chart-empty t-body-sm text-secondary" data-chart-empty>No scans yet.</p>
+              </div>
+            </div>
+            <div class="card">
+              <h3 class="t-heading-sm">By city</h3>
+              <div class="qr-bars" data-chart="city">
                 <p class="qr-chart-empty t-body-sm text-secondary" data-chart-empty>No scans yet.</p>
               </div>
             </div>
@@ -177,7 +246,29 @@ const DetailView: FC<DetailViewProps> = ({ qr, total, topCountry, topDevice, qrS
                 <p class="qr-chart-empty t-body-sm text-secondary" data-chart-empty>No scans yet.</p>
               </div>
             </div>
+            <div class="card">
+              <h3 class="t-heading-sm">By operating system</h3>
+              <div class="qr-bars" data-chart="os">
+                <p class="qr-chart-empty t-body-sm text-secondary" data-chart-empty>No scans yet.</p>
+              </div>
+            </div>
+            <div class="card">
+              <h3 class="t-heading-sm">By browser</h3>
+              <div class="qr-bars" data-chart="browser">
+                <p class="qr-chart-empty t-body-sm text-secondary" data-chart-empty>No scans yet.</p>
+              </div>
+            </div>
+            <div class="card">
+              <h3 class="t-heading-sm">By language</h3>
+              <div class="qr-bars" data-chart="language">
+                <p class="qr-chart-empty t-body-sm text-secondary" data-chart-empty>No scans yet.</p>
+              </div>
+            </div>
           </div>
+
+          {/* Raw per-scan log. Server-rendered so it works with JS disabled.
+              See ScanLogTable for the privacy caveats on what is shown. */}
+          <ScanLogTable scans={scans} truncated={scansTruncated} />
         </section>
       </div>
 
@@ -185,6 +276,134 @@ const DetailView: FC<DetailViewProps> = ({ qr, total, topCountry, topDevice, qrS
     </div>
   );
 };
+
+// --- Raw scan log ----------------------------------------------------------
+
+/** Rows rendered in the table. A page of 200 is plenty; the rest is a count. */
+const SCAN_PAGE_SIZE = 200;
+
+/**
+ * Per-scan table.
+ *
+ * Contains raw IP addresses, so it is rendered only for the authenticated
+ * owner. The referer is shown as host/short-path (query strings dropped) and
+ * the scanner ID is the non-reversible hash, not a second copy of the address.
+ */
+const ScanLogTable: FC<{ scans: ScanDetail[]; truncated: boolean }> = ({
+  scans,
+  truncated,
+}) => {
+  if (!scans.length) {
+    return (
+      <div class="card qr-scanlog">
+        <h3 class="t-heading-sm">Scan log</h3>
+        <p class="qr-chart-empty t-body-sm text-secondary" data-chart-empty>
+          No scans yet. Every scan of this code is listed here.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div class="card qr-scanlog">
+      <div class="qr-detail-chart-head">
+        <h3 class="t-heading-sm">Scan log</h3>
+        <span class="t-body-sm text-secondary">
+          Newest first{scans.length >= SCAN_PAGE_SIZE ? ` · showing latest ${SCAN_PAGE_SIZE}` : ""}
+        </span>
+      </div>
+      <p class="field-hint">
+        Includes raw IP addresses and precise location where permission was already
+        granted. This is personal data — export or delete it accordingly.
+      </p>
+      <div
+        class="qr-scanlog-wrap"
+        tabIndex={0}
+        role="region"
+        aria-label="Scan log table, scrollable"
+      >
+        <table class="qr-scanlog-table">
+          <thead>
+            <tr>
+              <th scope="col">When</th>
+              <th scope="col">IP</th>
+              <th scope="col">Scanner ID</th>
+              <th scope="col">Location</th>
+              <th scope="col">Device</th>
+              <th scope="col">Browser</th>
+              <th scope="col">Lang</th>
+              <th scope="col">Referer</th>
+              <th scope="col">Screen</th>
+            </tr>
+          </thead>
+          <tbody>
+            {scans.map((s) => (
+              <tr>
+                <td class="qr-scanlog-when">
+                  <time dateTime={new Date(s.ts).toISOString()}>{formatScanTime(s.ts)}</time>
+                </td>
+                <td class="qr-scanlog-mono">{s.ip ?? dash}</td>
+                <td class="qr-scanlog-mono" title="Daily-rotating hash, not reversible">
+                  {s.ipHash ?? dash}
+                </td>
+                <td>{scanLocation(s)}</td>
+                <td>{scanDevice(s)}</td>
+                <td>{scanBrowser(s)}</td>
+                <td>{s.language ?? dash}</td>
+                <td class="qr-scanlog-mono" title={s.referer ?? undefined}>
+                  {s.referer ?? dash}
+                </td>
+                <td>{scanScreen(s)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
+const dash = "—";
+
+/** Absolute UTC timestamp: a scan log is useless without a precise time. */
+function formatScanTime(ts: number): string {
+  const d = new Date(ts);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ` +
+    `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())} UTC`
+  );
+}
+
+function join(parts: Array<string | null | undefined>, sep = " "): string {
+  return parts.filter(Boolean).join(sep) || dash;
+}
+
+function scanLocation(s: ScanDetail): string {
+  const coarse = join([s.city, s.country], ", ");
+  // Precise coordinates only exist when the visitor had already granted
+  // location access; fall back to the city-level fix.
+  if (s.geoLat != null && s.geoLon != null) {
+    const acc = s.geoAccuracyM != null ? ` ±${Math.round(s.geoAccuracyM)}m` : "";
+    return `${coarse} · ${s.geoLat.toFixed(4)}, ${s.geoLon.toFixed(4)}${acc}`;
+  }
+  return coarse;
+}
+
+function scanDevice(s: ScanDetail): string {
+  return join([s.device, s.os, s.osVersion], " ");
+}
+
+function scanBrowser(s: ScanDetail): string {
+  return join([s.browser, s.browserVersion], " ");
+}
+
+function scanScreen(s: ScanDetail): string {
+  if (s.screenW == null || s.screenH == null) return dash;
+  const dpr = s.dpr != null && s.dpr !== 1 ? ` @${s.dpr}x` : "";
+  const tz = s.timezone ? ` · ${s.timezone}` : "";
+  return `${s.screenW}×${s.screenH}${dpr}${tz}`;
+}
 
 function capitalize(s: string): string {
   return s.length ? s[0].toUpperCase() + s.slice(1) : s;
@@ -196,6 +415,18 @@ function topEntry(map: Record<string, number>): { name: string; count: number } 
     if (!best || count > best.count) best = { name, count };
   }
   return best;
+}
+
+/**
+ * Mean distinct scanners across days that saw traffic, or null when there were
+ * none. Averaging only over active days stops a young QR code from reporting a
+ * misleadingly low number just because it has only existed for a few days.
+ */
+function avgDailyUniques(daily: Array<{ day: string; count: number }>): number | null {
+  const active = daily.filter((d) => d.count > 0);
+  if (!active.length) return null;
+  const sum = active.reduce((acc, d) => acc + d.count, 0);
+  return Math.round(sum / active.length);
 }
 
 // ---------------------------------------------------------------------------
@@ -226,15 +457,28 @@ qrDetail.get("/app/:id", async (c) => {
   let total = 0;
   let topCountry: { name: string; count: number } | null = null;
   let topDevice: { name: string; count: number } | null = null;
+  let uniques: number | null = null;
+  let scans: ScanDetail[] = [];
+  let scansTruncated = false;
   let analyticsError = false;
   try {
-    const [t, breakdown] = await Promise.all([
+    const [t, breakdown, u, scanRows] = await Promise.all([
       getTotals(c.env, id),
       getBreakdown(c.env, id),
+      getUniques(c.env, id, 30),
+      getScans(c.env, id, SCAN_PAGE_SIZE, 0),
     ]);
     total = t;
     topCountry = topEntry(breakdown.country);
     topDevice = topEntry(breakdown.device);
+    // A raw distinct count would double-count anyone who scanned on two days
+    // (the salt rotates daily, so they are unlinkable). Report the average
+    // distinct scanners across days that actually saw traffic, which is both
+    // honest and the number people actually want. Null when no hashes exist.
+    uniques = avgDailyUniques(u.daily);
+    scans = scanRows;
+    // A full page implies there is at least one more row behind it.
+    scansTruncated = scanRows.length >= SCAN_PAGE_SIZE;
   } catch (err) {
     console.error(err);
     analyticsError = true;
@@ -250,6 +494,9 @@ qrDetail.get("/app/:id", async (c) => {
         total={total}
         topCountry={topCountry && topCountry.name !== "unknown" ? topCountry : topCountry}
         topDevice={topDevice}
+        uniques={uniques}
+        scans={scans}
+        scansTruncated={scansTruncated}
         qrSvg={qrSvg}
         printedUrl={printedUrl}
         analyticsError={analyticsError}

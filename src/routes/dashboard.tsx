@@ -51,7 +51,13 @@ const QrListItem: FC<{ qr: QrWithScans }> = ({ qr }) => {
   const typeLabel = TYPE_LABEL[qr.type] ?? qr.type;
   const typeIcon = qr.type as IconName;
   const dynamic = qr.is_dynamic === 1;
-  const search = `${qr.title} ${typeLabel}`.toLowerCase();
+  // A dynamic code with no destination is live but leads nowhere yet. It must
+  // never sit unnoticed beside a configured code that looks identical — that
+  // ambiguity is how an owner ends up setting the destination on the wrong
+  // QR, or scanning one and wondering why it never changed.
+  const unclaimed = dynamic && !qr.destination;
+  const code = qr.short_code ?? "";
+  const search = `${qr.title} ${typeLabel} ${code}`.toLowerCase();
 
   return (
     <div class="qr-item-wrap" data-search={search}>
@@ -74,6 +80,7 @@ const QrListItem: FC<{ qr: QrWithScans }> = ({ qr }) => {
             ) : (
               <Badge tone="neutral">Static</Badge>
             )}
+            {unclaimed ? <Badge tone="warning" dot>No destination yet</Badge> : null}
           </div>
         </div>
 
@@ -85,6 +92,10 @@ const QrListItem: FC<{ qr: QrWithScans }> = ({ qr }) => {
         </div>
 
         <div class="qr-item-meta">
+          {/* The short code identifies the printed label. Two codes can easily
+              share a title, and the code is the only thing that tells you which
+              one you are holding. */}
+          {code ? <span class="qr-item-code t-caption">{code}</span> : null}
           <span class="t-caption text-tertiary">{formatDate(qr.created_at)}</span>
         </div>
 

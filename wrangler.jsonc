@@ -3,33 +3,55 @@
   "name": "sqanny",
   "main": "src/index.tsx",
   "compatibility_date": "2025-04-01",
-  "compatibility_flags": ["nodejs_compat"],
-  "account_id": "fea3602912f3939a9c3d8bc45c6b7829",
-  "observability": { "enabled": true },
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "account_id": "df243a5c67200d48e35d09f539f4b576",
+  "observability": {
+    "enabled": true
+  },
   "assets": {
     "directory": "./public"
   },
   "vars": {
-    "APP_URL": "https://quoda.codebyte.dev"
+    "APP_URL": "https://sqanny.chetnaverse.com",
+    "EMAIL_FROM": "Sqanny <sqanny-noreply@chetnaverse.com>"
   },
   "routes": [
-    { "pattern": "quoda.codebyte.dev", "custom_domain": true }
+    {
+      "pattern": "sqanny.chetnaverse.com",
+      "custom_domain": true
+    }
   ],
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "sqanny",
-      "database_id": "8a09d1ea-9f16-44cd-985a-28f7ebf6bf60",
+      "database_id": "d7fb9547-f05c-49e4-9d29-a5bba20ba35e",
       "migrations_dir": "migrations"
     }
   ],
   "kv_namespaces": [
-    { "binding": "SCAN_COUNTERS", "id": "8653f3fe360e45c3849a7f09a3ddfa67" },
-    { "binding": "RATE_LIMIT", "id": "ef8c00c97d8448da859882f941c2a851" },
-    { "binding": "SESSION_CACHE", "id": "b95ee80e13da4fa1aca067f725c44208" }
+    {
+      "binding": "SCAN_COUNTERS",
+      "id": "a32151647c1c40978291cafd54579972"
+    },
+    {
+      "binding": "RATE_LIMIT",
+      "id": "8cb3e21fd6844558891270c28480070b"
+    },
+    {
+      "binding": "SESSION_CACHE",
+      "id": "b374a02d82aa4a2abdb83daaf9981d9e"
+    }
   ],
   "r2_buckets": [
-    { "binding": "ASSETS_BUCKET", "bucket_name": "quoda-assets" }
+    {
+      "binding": "quoda_assets",
+      "bucket_name": "quoda-assets"
+    }
   ],
-  "ai": { "binding": "AI" }
+  "ai": {
+    "binding": "AI"
+  }
 }

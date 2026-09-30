@@ -25,6 +25,8 @@ export interface MagicLinkRow {
   email: string;
   expires_at: number;
   consumed_at: number | null;
+  /** Return path applied after a successful sign-in, if one was captured. */
+  next_path: string | null;
 }
 
 export interface QrRow {
@@ -40,6 +42,9 @@ export interface QrRow {
   folder_id: string | null;
   created_at: number;
   updated_at: number;
+  /** Who set a deferred destination, and when. Null for codes created with one. */
+  destination_claimed_by: string | null;
+  destination_claimed_at: number | null;
 }
 
 export interface FolderRow {
@@ -175,19 +180,20 @@ export async function deleteSession(db: D1Database, id: string): Promise<void> {
 
 export async function createMagicLink(
   db: D1Database,
-  input: { tokenHash: string; email: string; expiresAt: number },
+  input: { tokenHash: string; email: string; expiresAt: number; nextPath?: string | null },
 ): Promise<MagicLinkRow> {
   await db
     .prepare(
-      "INSERT INTO magic_links (token_hash, email, expires_at, consumed_at) VALUES (?, ?, ?, NULL)",
+      "INSERT INTO magic_links (token_hash, email, expires_at, consumed_at, next_path) VALUES (?, ?, ?, NULL, ?)",
     )
-    .bind(input.tokenHash, input.email, input.expiresAt)
+    .bind(input.tokenHash, input.email, input.expiresAt, input.nextPath ?? null)
     .run();
   return {
     token_hash: input.tokenHash,
     email: input.email,
     expires_at: input.expiresAt,
     consumed_at: null,
+    next_path: input.nextPath ?? null,
   };
 }
 
@@ -277,6 +283,9 @@ export async function createQr(
     folder_id,
     created_at,
     updated_at,
+    // A freshly created code has not been claimed by anyone.
+    destination_claimed_by: null,
+    destination_claimed_at: null,
   };
 }
 
@@ -336,6 +345,44 @@ export async function updateQr(
 
 export async function deleteQr(db: D1Database, id: string): Promise<void> {
   await db.prepare("DELETE FROM qr_codes WHERE id = ?").bind(id).run();
+}
+
+export type ClaimResult = "claimed" | "already-set" | "not-found";
+
+/**
+ * Set a deferred destination on a code identified by its short code.
+ *
+ * The `destination IS NULL` predicate inside the UPDATE is the concurrency
+ * control, not a pre-flight SELECT. Two visitors can open the claim page at the
+ * same instant; only one UPDATE can flip the row, and the loser is told the code
+ * is already set. Checking first and writing second would let both win.
+ */
+export async function claimDestination(
+  db: D1Database,
+  shortCode: string,
+  destination: string,
+  userId: string,
+): Promise<ClaimResult> {
+  const now = Date.now();
+  const res = await db
+    .prepare(
+      `UPDATE qr_codes
+          SET destination = ?, destination_claimed_by = ?, destination_claimed_at = ?, updated_at = ?
+        WHERE short_code = ? AND destination IS NULL AND is_dynamic = 1`,
+    )
+    .bind(destination, userId, now, now, shortCode)
+    .run();
+
+  if (res.meta.changes > 0) return "claimed";
+
+  // Distinguish "someone beat you to it" from "no such code", so the page can
+  // say something useful instead of a bare error.
+  const row = await db
+    .prepare("SELECT destination FROM qr_codes WHERE short_code = ?")
+    .bind(shortCode)
+    .first<{ destination: string | null }>();
+  if (!row) return "not-found";
+  return "already-set";
 }
 
 export async function countDynamicByUser(

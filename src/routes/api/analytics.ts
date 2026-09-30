@@ -2,12 +2,19 @@ import { Hono } from "hono";
 import type { AppEnv } from "../../middleware/auth";
 import { requireAuth } from "../../middleware/auth";
 import { getQrById } from "../../db/queries";
-import { getTotals, getDaily, getBreakdown } from "../../lib/analytics";
+import {
+  getTotals,
+  getDaily,
+  getBreakdown,
+  getUniques,
+  getScans,
+} from "../../lib/analytics";
 
 export const analyticsApi = new Hono<AppEnv>();
 analyticsApi.use("/api/qr/*", requireAuth);
 
-// GET /api/qr/:id/analytics -> { ok, total, daily, breakdown } (ownership enforced).
+// GET /api/qr/:id/analytics -> { ok, total, daily, breakdown, uniques }
+// (ownership enforced).
 analyticsApi.get("/api/qr/:id/analytics", async (c) => {
   const user = c.get("user")!;
   const id = c.req.param("id");
@@ -21,15 +28,49 @@ analyticsApi.get("/api/qr/:id/analytics", async (c) => {
   const days = Number.isFinite(daysParam) && daysParam > 0 ? Math.min(daysParam, 365) : 30;
 
   try {
-    const [total, daily, breakdown] = await Promise.all([
+    const [total, daily, breakdown, uniques] = await Promise.all([
       getTotals(c.env, id),
       getDaily(c.env, id, days),
       getBreakdown(c.env, id),
+      getUniques(c.env, id, days),
     ]);
 
-    return c.json({ ok: true, total, daily, breakdown });
+    return c.json({ ok: true, total, daily, breakdown, uniques });
   } catch (err) {
     console.error(err);
     return c.json({ ok: false, error: "Could not load analytics." }, 500);
+  }
+});
+
+/**
+ * GET /api/qr/:id/scans?limit=&offset= -> individual scan rows, newest first.
+ *
+ * Separate from the aggregate endpoint because it is a different shape and a
+ * different access pattern: this one grows with traffic and is paginated.
+ * `getScans` clamps the limit, so the query string cannot request the table.
+ */
+analyticsApi.get("/api/qr/:id/scans", async (c) => {
+  const user = c.get("user")!;
+  const id = c.req.param("id");
+
+  const qr = await getQrById(c.env.DB, id);
+  if (!qr || qr.user_id !== user.id) {
+    return c.json({ ok: false, error: "Not found." }, 404);
+  }
+
+  const limit = Number(c.req.query("limit"));
+  const offset = Number(c.req.query("offset"));
+
+  try {
+    const scans = await getScans(
+      c.env,
+      id,
+      Number.isFinite(limit) && limit > 0 ? limit : 50,
+      Number.isFinite(offset) && offset > 0 ? offset : 0,
+    );
+    return c.json({ ok: true, scans });
+  } catch (err) {
+    console.error(err);
+    return c.json({ ok: false, error: "Could not load scans." }, 500);
   }
 });

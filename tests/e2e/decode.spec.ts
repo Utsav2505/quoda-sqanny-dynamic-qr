@@ -118,3 +118,74 @@ test.describe("QR scannability — generated codes actually decode", () => {
     expect(decoded).toContain("Sqanny Cafe");
   });
 });
+
+// The regression the studio bug caused: a dynamic code's PRINTED image must
+// encode its permanent redirect, never its destination. When it encoded the
+// content, the studio showed a different QR from the one on the label, and
+// retargeting made it visibly change — the exact thing a dynamic code promises
+// it will never do.
+test.describe("dynamic codes — the printed image is stable", () => {
+  const shortCode = "e2eStable01";
+
+  test.beforeEach(async ({ page }) => {
+    await page.goto("/");
+    await page.addScriptTag({ path: "node_modules/jsqr/dist/jsQR.js" });
+  });
+
+  test("decodes to the redirect URL, not the destination", async ({ page, baseURL }) => {
+    const svg = await previewSvg(page, {
+      type: "url",
+      isDynamic: true,
+      shortCode,
+      fields: { url: "https://example.com/menu" },
+    });
+    const decoded = await decodeSvg(page, svg);
+    // baseURL rather than a hardcoded host: APP_URL is the dev origin locally
+    // and the custom domain in production, and this test must hold in both.
+    expect(decoded).toBe(`${baseURL}/r/${shortCode}`);
+    expect(decoded).not.toContain("example.com");
+  });
+
+  test("is byte-identical after the destination changes", async ({ page, baseURL }) => {
+    // Retarget twice and prove the printed code does not move. This is the
+    // guarantee the whole product rests on.
+    const before = await decodeSvg(
+      page,
+      await previewSvg(page, {
+        type: "url",
+        isDynamic: true,
+        shortCode,
+        fields: { url: "https://one.test" },
+      }),
+    );
+    const after = await decodeSvg(
+      page,
+      await previewSvg(page, {
+        type: "url",
+        isDynamic: true,
+        shortCode,
+        fields: { url: "https://two.test/some/deep/path?with=query" },
+      }),
+    );
+    expect(before).toBe(after);
+    expect(before).toBe(`${baseURL}/r/${shortCode}`);
+  });
+
+  test("a static code still decodes to its content", async ({ page }) => {
+    // Guards against over-correcting: static codes must NOT be forced through
+    // a redirect, or they would stop working entirely.
+    const url = "https://example.com/static";
+    const svg = await previewSvg(page, { type: "url", isDynamic: false, fields: { url } });
+    expect(await decodeSvg(page, svg)).toBe(url);
+  });
+
+  test("a dynamic code with no short code yet renders no code", async ({ page }) => {
+    // Create-mode deferred code: nothing real to encode, so the API must refuse
+    // rather than hand back a QR for an empty string.
+    const res = await page.request.post("/api/preview", {
+      data: { type: "url", isDynamic: true, fields: { url: "" } },
+    });
+    expect(res.status()).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe("no_code_yet");
+  });
+});

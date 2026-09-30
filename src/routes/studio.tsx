@@ -241,16 +241,54 @@ interface StudioViewProps {
   isDynamic: boolean;
   title: string;
   qrId?: string;
+  /**
+   * The permanent short code, edit mode only. Its presence is what makes the
+   * preview render the real printed payload (/r/<code>) rather than the
+   * content, so the studio always shows what is on the label.
+   */
+  shortCode?: string;
   previewSvg: string;
 }
 
-const StudioView: FC<StudioViewProps> = ({ mode, activeType, fields, design, isDynamic, title, qrId, previewSvg }) => {
+/**
+ * "Set the destination later" — sits directly beneath the URL field on the
+ * Website type, and only there, because that is the only plain type with a bare
+ * destination to defer. Rich types always host their own page.
+ *
+ * The URL input is disabled (not hidden) while this is on: the owner should be
+ * able to see the field they deferred, and toggling back must restore whatever
+ * they had typed rather than silently discarding it. The client island owns
+ * that enable/disable; this is the markup and the explanation.
+ */
+const DeferredDestinationToggle: FC = () => (
+  <div class="studio-deferred" data-deferred-panel>
+    <div class="studio-toggle-row">
+      <label class="studio-check-row" for="qr-deferred">
+        <input type="checkbox" id="qr-deferred" data-deferred />
+        <span>
+          <span class="field-label">Set the destination later</span>
+          <span class="t-body-sm text-secondary studio-toggle-help">
+            Print the code now and decide where it goes later. Scans open a page
+            where a signed-in person sets the destination.
+          </span>
+        </span>
+      </label>
+    </div>
+    <p class="field-hint" data-deferred-note hidden>
+      This code is forced dynamic — that is what lets the printed code be
+      retargeted later without reprinting it.
+    </p>
+  </div>
+);
+
+const StudioView: FC<StudioViewProps> = ({ mode, activeType, fields, design, isDynamic, title, qrId, shortCode, previewSvg }) => {
   return (
     <div
       class="studio"
       data-studio
       data-mode={mode}
       data-qr-id={qrId ?? ""}
+      data-short-code={shortCode ?? ""}
       data-active-type={activeType}
     >
       <header class="studio-head">
@@ -300,6 +338,7 @@ const StudioView: FC<StudioViewProps> = ({ mode, activeType, fields, design, isD
                 {FIELDS[t.type].map((f) => (
                   <FieldControl type={t.type} field={f} value={t.type === activeType ? fields[f.key] : undefined} />
                 ))}
+                {t.type === "url" ? <DeferredDestinationToggle /> : null}
                 {t.rich ? (
                   <p class="studio-rich-note t-body-sm text-secondary">
                     <Icon name="link" size={14} /> This type hosts a live page and is always dynamic — the printed code points to it and never changes when you edit.
@@ -400,6 +439,11 @@ const StudioView: FC<StudioViewProps> = ({ mode, activeType, fields, design, isD
           <div class="studio-preview-sticky stack">
             <QrPreview svg={previewSvg} label="Live QR preview" />
 
+            {/* Tells the owner whether what they see is what they print. For a
+                dynamic code the preview IS the printed code; for a static one
+                the content is baked in and can never be changed. */}
+            <p class="studio-preview-caption t-caption text-secondary" data-preview-caption role="status"></p>
+
             <p class="studio-warn" data-scan-warn hidden role="status"></p>
 
             <div class="studio-actions stack">
@@ -490,6 +534,7 @@ studio.get("/app/:id/edit", async (c) => {
         isDynamic={qr.is_dynamic === 1}
         title={qr.title}
         qrId={qr.id}
+        shortCode={qr.short_code ?? ""}
         previewSvg={previewSvg}
       />
       <script src="/js/studio.js" defer></script>

@@ -14,6 +14,21 @@ export interface Bindings {
   EMAIL_FROM?: string;
   /** fal.ai API key — when set, wallpaper backgrounds use fal (FLUX dev); else CF Workers AI. */
   FAL_KEY?: string;
+  /**
+   * HMAC key for pseudonymising scan IP addresses. Deploy with
+   * `wrangler secret put SCAN_HASH_SECRET` — never in wrangler.jsonc. When
+   * unset, scans are logged without an ip_hash (no unique-visitor counting)
+   * rather than falling back to storing a raw address.
+   */
+  SCAN_HASH_SECRET?: string;
+  /**
+   * Debug-only. When set to "1"/"true", each scan logs the raw client IP and
+   * the parsed dimensions to the Worker console. Off by default because
+   * console output is retained by Cloudflare when observability is enabled,
+   * which would turn logs into a second store of raw addresses — exactly what
+   * ip_hash exists to avoid. Set it locally; leave it unset in production.
+   */
+  SCAN_LOG_IP?: string;
   APP_URL: string;
 }
 

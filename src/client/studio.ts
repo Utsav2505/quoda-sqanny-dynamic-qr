@@ -14,6 +14,8 @@ interface QrDesign {
 interface PreviewResponse {
   ok: boolean;
   svg?: string;
+  /** The exact string the rendered QR encodes — used for verification. */
+  payload?: string;
   scannable?: boolean;
   warn?: boolean;
   ratio?: number;
@@ -22,12 +24,25 @@ interface PreviewResponse {
 
 const RICH_TYPES = new Set(["pdf", "menu", "business", "appstore", "social"]);
 
+/**
+ * Preview debounce. 220ms was fine while the request silently failed, but now
+ * that it succeeds it is a real round trip on every pause in typing. 350ms
+ * keeps the preview feeling live and stays well inside the rate limit.
+ */
+const PREVIEW_DEBOUNCE_MS = 350;
+
 function init(): void {
   const root = document.querySelector<HTMLElement>("[data-studio]");
   if (!root) return;
 
   const mode = root.getAttribute("data-mode") === "edit" ? "edit" : "new";
   const qrId = root.getAttribute("data-qr-id") || "";
+  /**
+   * The code's permanent short code, present only in edit mode. Its presence is
+   * what switches the preview from "destination content" to "the printed code",
+   * so it is the single source of truth for which image the owner is looking at.
+   */
+  const shortCode = root.getAttribute("data-short-code") || "";
   let activeType = root.getAttribute("data-active-type") || "url";
 
   const previewSurface = root.querySelector<HTMLElement>(".qr-preview-surface");
@@ -36,6 +51,10 @@ function init(): void {
   const titleInput = root.querySelector<HTMLInputElement>("[data-title]");
   const dynamicToggle = root.querySelector<HTMLInputElement>("[data-dynamic]");
   const dynamicPanel = root.querySelector<HTMLElement>("[data-dynamic-panel]");
+  const deferredToggle = root.querySelector<HTMLInputElement>("[data-deferred]");
+  const deferredNote = root.querySelector<HTMLElement>("[data-deferred-note]");
+  const deferredPanel = root.querySelector<HTMLElement>("[data-deferred-panel]");
+  const previewCaption = root.querySelector<HTMLElement>("[data-preview-caption]");
   const saveBtn = root.querySelector<HTMLElement>(".studio-save");
   const logoInput = root.querySelector<HTMLInputElement>("[data-logo]");
   const logoHidden = root.querySelector<HTMLInputElement>('[data-design="logo"]');
@@ -96,11 +115,15 @@ function init(): void {
     const payload = {
       type: activeType,
       isDynamic: isDynamic(),
-      content: readContent(),
+      // `fields`, NOT `content` — /api/preview reads `fields`. Sending
+      // `content` here made every preview 400 and left the studio showing a
+      // stale image that only changed on a full page reload.
+      fields: readContent(),
       design: readDesign(),
+      ...(shortCode ? { shortCode } : {}),
     };
     try {
-      const res = await fetch("/api/qr/preview", {
+      const res = await fetch("/api/preview", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(payload),
@@ -126,8 +149,16 @@ function init(): void {
         previewSurface.innerHTML = data.svg;
         lastSvg = data.svg;
         clearError();
-      } else if (!data.ok && data.error) {
-        // Expected while a required field is still empty — keep last good SVG.
+        setPreviewCaption(true);
+      } else if (data.error === "no_code_yet") {
+        // A dynamic code with no destination and no short code yet: there is
+        // genuinely nothing to render. Show the honest empty state instead of
+        // leaving whatever was on screen looking like the printed code.
+        showPreviewEmpty(
+          "Save this code first. Its printed QR appears here, and never changes.",
+        );
+      } else if (data.error === "incomplete") {
+        // A required field is still empty — keep the last good SVG.
         clearError();
       }
     } catch {
@@ -135,9 +166,40 @@ function init(): void {
     }
   }
 
+  /** Caption that tells the owner whether what they see is what they print. */
+  function setPreviewCaption(live: boolean): void {
+    if (!previewCaption) return;
+    const dynamic = isDynamic();
+    if (!dynamic) {
+      previewCaption.textContent =
+        "Static code — the content is encoded directly. It cannot be changed later.";
+    } else if (shortCode) {
+      previewCaption.textContent = live
+        ? `This is the printed code — it always points at /r/${shortCode} and never changes.`
+        : `This code always points at /r/${shortCode}, whatever the destination becomes.`;
+    } else {
+      previewCaption.textContent =
+        "Dynamic code — once saved, the printed QR points at a permanent redirect you can retarget anytime.";
+    }
+  }
+
+  function showPreviewEmpty(msg: string): void {
+    if (!previewSurface) return;
+    previewSurface.innerHTML =
+      `<div class="qr-preview-empty" role="status">${escapeText(msg)}</div>`;
+    lastSvg = "";
+    clearError();
+  }
+
+  function escapeText(s: string): string {
+    return s.replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string),
+    );
+  }
+
   function schedulePreview(): void {
     window.clearTimeout(debounceTimer);
-    debounceTimer = window.setTimeout(refreshPreview, 220);
+    debounceTimer = window.setTimeout(refreshPreview, PREVIEW_DEBOUNCE_MS);
   }
 
   // -- type switching ------------------------------------------------------
@@ -162,6 +224,11 @@ function init(): void {
       }
     }
     if (dynamicPanel) dynamicPanel.hidden = rich;
+    // A deferred destination only exists on the Website type.
+    if (type !== "url" && deferredToggle) {
+      deferredToggle.checked = false;
+      applyDeferred();
+    }
     schedulePreview();
   }
 
@@ -169,16 +236,65 @@ function init(): void {
     btn.addEventListener("click", () => selectType(btn.getAttribute("data-type-pick")!));
   });
 
+  // -- deferred destination -------------------------------------------------
+  // "Set the destination later": the URL field is disabled rather than
+  // cleared, so toggling back off restores whatever was typed. `required` is
+  // lifted while disabled because a disabled control is not submitted and a
+  // still-required empty field would block the form in some browsers.
+  function urlFieldEl(): HTMLInputElement | null {
+    return (
+      root!.querySelector<HTMLInputElement>(
+        `[data-fields-for="url"] [data-field="url"]`,
+      ) ?? root!.querySelector<HTMLInputElement>('[data-field="url"]')
+    );
+  }
+
+  function applyDeferred(): void {
+    const on = !!deferredToggle?.checked;
+    const url = urlFieldEl();
+    if (url) {
+      url.disabled = on;
+      if (on) {
+        // Capture required-state once, before the first clear, so restoring it
+        // later is exact rather than guessed.
+        if (url.dataset.deferredRequired === undefined) {
+          url.dataset.deferredRequired = url.required ? "1" : "0";
+        }
+        url.removeAttribute("required");
+        // Stash rather than discard, so turning the toggle back off restores
+        // exactly what was typed instead of an empty field.
+        url.dataset.deferredSaved = url.value;
+        url.value = "";
+      } else if (url.dataset.deferredSaved !== undefined) {
+        url.value = url.dataset.deferredSaved;
+        delete url.dataset.deferredSaved;
+        if (url.dataset.deferredRequired === "1") {
+          url.required = true;
+          delete url.dataset.deferredRequired;
+        }
+      }
+    }
+    // A code with no destination can only work if it is dynamic, so force it
+    // on rather than letting the create call fail server-side.
+    if (on && dynamicToggle && !dynamicToggle.disabled) {
+      dynamicToggle.checked = true;
+    }
+    if (deferredNote) deferredNote.hidden = !on;
+    schedulePreview();
+  }
+
+  deferredToggle?.addEventListener("change", applyDeferred);
+
   // -- input wiring --------------------------------------------------------
   root.addEventListener("input", (e) => {
     const t = e.target as HTMLElement;
-    if (t.matches("[data-field], [data-design], [data-dynamic]")) {
+    if (t.matches("[data-field], [data-design], [data-dynamic], [data-deferred]")) {
       schedulePreview();
     }
   });
   root.addEventListener("change", (e) => {
     const t = e.target as HTMLElement;
-    if (t.matches("[data-field], [data-design], [data-dynamic]")) {
+    if (t.matches("[data-field], [data-design], [data-dynamic], [data-deferred]")) {
       schedulePreview();
     }
   });
@@ -392,6 +508,7 @@ function init(): void {
 
   // -- initial sync --------------------------------------------------------
   selectType(activeType);
+  setPreviewCaption(false);
 }
 
 // --- PDF helpers (tiny, image-only single page) ----------------------------
