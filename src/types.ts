@@ -10,6 +10,15 @@ export interface Bindings {
   SESSION_CACHE: KVNamespace;
   ASSETS_BUCKET: R2Bucket;
   AI: AIBinding;
+  /**
+   * Static asset fetcher for the bound `assets.directory` in wrangler.jsonc.
+   *
+   * Used by routes/spa.ts to read the built React shell. The platform serves
+   * `/_app/assets/*` from this binding before the Worker is invoked at all; the
+   * Worker only reaches for it on the SPA shell document itself, which is not a
+   * real file path and therefore always misses the asset layer.
+   */
+  ASSETS: Fetcher;
   RESEND_API_KEY?: string;
   EMAIL_FROM?: string;
   /** fal.ai API key — when set, wallpaper backgrounds use fal (FLUX dev); else CF Workers AI. */

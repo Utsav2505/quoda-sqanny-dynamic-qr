@@ -1,0 +1,299 @@
+/**
+ * SQANNY design tokens.
+ *
+ * ===========================================================================
+ * WHY THIS IS NOT A TAILWIND THEME FILE AND NOT `@theme`
+ * ===========================================================================
+ * Tailwind v4's `@theme` block is the right tool for *scale* tokens (spacing,
+ * radii, type sizes). It is the wrong tool for the thing this product actually
+ * needs: a semantic surface ramp that is deliberately not monochrome.
+ *
+ * The brand colour is `#141414` — near-black. The naive reading of that brief is
+ * "make the app black", which produces the developer-IDE look the brief explicitly
+ * rejects (#51). So the dark surface ramp below is built as four distinct tonal
+ * steps with real chroma differences, not as opacity tricks on one black. Each
+ * step answers a different question:
+ *
+ *   surface-0  the page itself, furthest back
+ *   surface-1  a raised region (a panel, a table header)
+ *   surface-2  an interactive region (hover, selected row)
+ *   surface-3  the highest plane (popovers, dialogs, toasts, menus)
+ *
+ * `--surface-2` is a *warm* neutral, not a pure grey. That single decision is
+ * what stops the product reading as a generic dark dashboard: pure greys at these
+ * luminances read cold and clinical, a warm neutral reads like a physical
+ * surface under tungsten light, which is exactly the "physical product" register
+ * the Sqanny Stand concept needs.
+ *
+ * ===========================================================================
+ * LUMINOUS MOSS IS A SPOTLIGHT, NOT A PAINT
+ * ===========================================================================
+ * `#2BEE34` is an extremely saturated, very bright green. Applied broadly it is
+ * exhausting and cheap-looking. So it appears in exactly five roles:
+ *
+ *   1. primary action
+ *   2. active / selected state
+ *   3. focus ring
+ *   4. positive status
+ *   5. a small number of deliberate glow accents
+ *
+ * It is never a background for large regions, never body text, and never a
+ * border on more than a couple of elements. `--accent-muted` exists so a
+ * selected row can read as selected without a 12%-luminance green filling a
+ * viewport.
+ *
+ * ===========================================================================
+ * THE `dark:` PREFIX IS A COMPATIBILITY SHIM, NOT A DESIGN FEATURE
+ * ===========================================================================
+ * The legacy SSR frontend had a light and a dark theme. This system is dark-only
+ * by design decision (#51). The `dark` selector is redefined here to
+ * `[data-theme="dark"]` purely so that any ported component using the idiomatic
+ * Tailwind `dark:` variant resolves to the SQANNY palette instead of silently
+ * falling back to nothing. It is not an invitation to build both themes.
+ */
+
+@import "tailwindcss";
+
+/* ------------------------------------------------------------------ tokens */
+@theme {
+  /* ---- type ------------------------------------------------------------ */
+  --font-sans:
+    "Inter var", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono:
+    "Berkeley Mono", ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+
+  /* A restrained scale. The brief asks for strong typographic hierarchy, which
+     means the steps need real separation - 14/16/20/24/32/44 - not 12/14/16/18
+     which flattens into a single grey mush. */
+  --text-caption: 0.6875rem;   /* 11px */
+  --text-label: 0.75rem;       /* 12px */
+  --text-caption-lg: 0.8125rem;/* 13px */
+  --text-body-sm: 0.875rem;    /* 14px */
+  --text-body: 0.9375rem;      /* 15px */
+  --text-body-lg: 1rem;        /* 16px */
+  --text-section: 1.125rem;    /* 18px */
+  --text-card: 1.25rem;        /* 20px */
+  --text-page: 1.75rem;        /* 28px */
+  --text-display: 2.25rem;     /* 36px */
+  --text-hero: 3.5rem;         /* 56px */
+
+  /* ---- spacing --------------------------------------------------------- */
+  /* The default Tailwind 4px grid is fine; what the brief rejects is "border on
+     everything". Spacing is the primary structural tool instead (#14). */
+  --spacing: 0.25rem;
+
+  /* ---- radii ----------------------------------------------------------- */
+  /* Slightly softer than shadcn's default. The Sqanny Stand is a physical
+     object with rounded corners; 10px reads as manufactured, 6px reads as
+     software chrome. */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.625rem;
+  --radius-xl: 0.75rem;
+  --radius-2xl: 1rem;
+
+  /* ---- motion ---------------------------------------------------------- */
+  /* Centralised so every transition in the product shares one timing language
+     and the reduced-motion override below can disable all of them at once. */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --duration-instant: 100ms;
+  --duration-fast: 160ms;
+  --duration-base: 220ms;
+  --duration-slow: 340ms;
+}
+
+/* --------------------------------------------------------------- palette
+   Declared on :root (not inside @theme) because these are semantic roles with
+   custom names, not Tailwind scale tokens. Components consume them through
+   Tailwind's arbitrary-value/variable syntax or the small utilities below. */
+:root {
+  color-scheme: dark;
+
+  /* ---- brand ---------------------------------------------------------- */
+  --brand-silver: #141414;
+  --brand-moss: #2bee34;
+
+  /* ---- dark surface ramp (warm-shifted, never pure #000) -------------- */
+  --surface-0: #141414; /* the page */
+  --surface-1: #1b1a19; /* raised panel */
+  --surface-2: #232120; /* interactive / selected */
+  --surface-3: #2c2a28; /* popover, dialog, menu */
+  --surface-4: #383431; /* highest plane, drag handles */
+
+  /* ---- text ----------------------------------------------------------- */
+  --foreground: #f5f3f0;      /* warm off-white, not #fff */
+  --foreground-muted: #a8a29a;  /* secondary prose */
+  --foreground-subtle: #736d66; /* caption, axis, disabled */
+  --foreground-inverse: #141414;
+
+  /* ---- lines ----------------------------------------------------------
+     Two weights only. "Every section needs a border" is the failure mode named
+     in #14; a two-step ramp lets hierarchy come from surface tone and type
+     weight first, with a hairline as confirmation rather than as structure. */
+  --border: #302d2a;
+  --border-subtle: #232120;
+  --border-strong: #45403b;
+
+  /* ---- accent --------------------------------------------------------- */
+  --accent: #2bee34;
+  --accent-hover: #4bf451;
+  --accent-foreground: #0a1a0c; /* text ON the accent; dark, for contrast */
+  --accent-muted: #14301a;      /* selected-row fill */
+  --accent-subtle: #0e2412;     /* hover fill */
+  --accent-ring: #2bee3455;
+
+  /* ---- status ---------------------------------------------------------
+     Distinct hues so status is never communicated by opacity alone. The
+     destructive tone is a warm red rather than a pure one, to sit with the
+     warm neutral ramp. */
+  --success: #35d05b;
+  --success-muted: #122a18;
+  --warning: #e8a33d;
+  --warning-muted: #2e2313;
+  --destructive: #e5484d;
+  --destructive-muted: #2e1518;
+  --info: #4b9fe8;
+  --info-muted: #14242f;
+
+  /* ---- focus ----------------------------------------------------------
+     One ring, used everywhere. A product with one accent has exactly one focus
+     treatment, otherwise focus becomes decoration. */
+  --focus: #2bee34;
+
+  /* ---- elevation ------------------------------------------------------
+     Shadows on a near-black surface are nearly invisible; depth comes from the
+     surface ramp plus these low-opacity, wide, warm-tinted shadows used only for
+     genuinely floating planes (dialog, popover, toast). */
+  --shadow-popover: 0 16px 48px -12px #000000cc, 0 0 0 1px var(--border);
+  --shadow-dialog: 0 32px 96px -16px #000000e6, 0 0 0 1px var(--border-strong);
+  --shadow-toast: 0 12px 32px -8px #000000b3, 0 0 0 1px var(--border);
+  --shadow-focus: 0 0 0 2px var(--surface-0), 0 0 0 4px var(--focus);
+
+  /* ---- type colours exposed for native form controls ------------------ */
+  --field-bg: #171615;
+  --field-border: #35312d;
+}
+
+/* `dark:` is a compatibility shim - see the file header. Resolving it to the
+   same palette means a ported `dark:` variant renders correctly instead of
+   producing no declaration at all. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* ------------------------------------------------------------------ base */
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    background-color: var(--surface-0);
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--surface-0);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: var(--text-body);
+    line-height: 1.55;
+    /* Removes the iOS tap-highlight flash that makes a dark app look grey on
+       first touch, without disabling real :focus-visible outlines. */
+    -webkit-tap-highlight-color: transparent;
+    font-feature-settings: "cv02", "cv03", "cv04", "ss01";
+    text-rendering: optimizeLegibility;
+  }
+
+  /* One focus treatment for the entire product. */
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  /* Serials are technical artefacts and should look like them: monospace,
+     tabular, slightly tracked out so 0/O and 1/I are distinguishable. */
+  code,
+  kbd,
+  samp,
+  pre {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  ::selection {
+    background: var(--accent);
+    color: var(--accent-foreground);
+  }
+
+  /* Scrollbars, because a default light scrollbar on a near-black panel is the
+     single most obvious "unstyled" tell. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--surface-4) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--surface-4);
+    border-radius: 999px;
+    border: 2px solid var(--surface-0);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #4a4540;
+  }
+}
+
+/* ------------------------------------------------------- reduced motion
+   Requirement 26: users who disable motion must get an accessible experience,
+   not just a faster one. One override disables CSS transitions globally; the
+   Motion/Framer animations are gated separately in `useMotionPref` so JS-driven
+   animation obeys the same preference. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ------------------------------------------------------------- utilities
+   Small, intentional helpers for the few things Tailwind has no verb for.
+   Kept deliberately few - each one here is a pattern used in several places. */
+@layer utilities {
+  /* Focus ring for controls that need a ring rather than an outline. */
+  .ring-focus {
+    box-shadow: var(--shadow-focus);
+  }
+
+  /* The Luminous Moss glow. Used sparingly per the header's rule 5. */
+  .glow-accent {
+    box-shadow: 0 0 0 1px var(--accent-ring), 0 0 24px -6px var(--accent);
+  }
+
+  /* A hairline that fades at the ends - used to separate page regions without
+     drawing a full box (the #14 anti-boxception move). */
+  .rule-fade {
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      var(--border) 12%,
+      var(--border) 88%,
+      transparent
+    );
+  }
+
+  /* Tabular numerals for any column of numbers or serials so digits align. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+}

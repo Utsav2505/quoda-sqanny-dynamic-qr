@@ -1,0 +1,24 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "types": ["vite/client"],
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": false,
+    "moduleDetection": "force",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["web/src/*"],
+      "@components/*": ["web/src/components/*"],
+      "@lib/*": ["web/src/lib/*"],
+      "@routes/*": ["web/src/routes/*"]
+    }
+  },
+  "include": ["web/src/**/*.ts", "web/src/**/*.tsx", "vite.config.ts"],
+  "exclude": ["node_modules", "public"]
+}

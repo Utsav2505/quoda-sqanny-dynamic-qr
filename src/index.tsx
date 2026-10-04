@@ -4,6 +4,7 @@ import { requireSameOrigin } from "./middleware/auth";
 
 // Public
 import { marketing } from "./routes/marketing";
+import { spa } from "./routes/spa";
 import { wallpaper } from "./routes/wallpaper";
 import { pages } from "./routes/pages";
 import { redirect } from "./routes/redirect";
@@ -95,5 +96,23 @@ app.route("/", wallpaper);
 
 // --- Marketing (home + static pages) registered LAST: its "/" is the catch-all home ---
 app.route("/", marketing);
+
+// --- React SPA (the new frontend) ---
+//
+// Mounted LAST, and deliberately so. While the SSR frontend above is still being
+// migrated area by area, the new app is reachable at /_app/ for development and
+// review without taking over any production route. This is what makes the
+// migration reversible at any point: deleting this one line restores the
+// previous behaviour exactly.
+//
+// When an area moves to React, its SSR route is deleted from the list above and
+// its prefix is added to SPA_PREFIXES in routes/spa.ts - two edits, in the same
+// change, so there is never a moment where a path is handled by neither or by
+// both.
+//
+// It is registered after `qrs` and `redirect` so that /q/:identifier and
+// /r/:code can never be captured by the SPA, no matter how the allowlist in
+// routes/spa.ts is edited. The QR redirect path stays React-free by construction.
+app.route("/", spa);
 
 export default app;
