@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { pages } from "../src/routes/pages";
 import { onboarding } from "../src/routes/onboarding";
 import { createUser, createQr, upsertDynamicPage } from "../src/db/queries";
-import { startSession, SESSION_COOKIE } from "../src/lib/auth/session";
+import { startSession } from "../src/lib/auth/session";
 
 // Minimal ExecutionContext stub — these routes don't use waitUntil but fetch()
 // requires a third arg.
@@ -101,7 +101,7 @@ describe("GET /p/:slug (hosted dynamic landing pages)", () => {
   });
 });
 
-describe("GET /onboarding (guarded first-run flow)", () => {
+describe("GET /onboarding (progressive four-step setup)", () => {
   it("redirects to /login without a session", async () => {
     const res = await onboarding.fetch(
       new Request("https://q.test/onboarding"),
@@ -112,7 +112,7 @@ describe("GET /onboarding (guarded first-run flow)", () => {
     expect(res.headers.get("location")).toBe("/login");
   });
 
-  it("returns 200 for a seeded, un-onboarded session", async () => {
+  it("renders step 1 for a seeded, un-onboarded session", async () => {
     const user = await createUser(env.DB, `ob-${crypto.randomUUID()}@example.com`);
     expect(user.onboarded_at).toBeNull();
     const setCookie = await startSession(env, user.id);
@@ -125,74 +125,197 @@ describe("GET /onboarding (guarded first-run flow)", () => {
     );
     expect(res.status).toBe(200);
     const html = await res.text();
-    // The 3-step flow + the locked CTA copy are present.
-    expect(html).toContain("Make it permanent");
-    expect(html).toContain("Pick a type");
-    expect(html).toContain(SESSION_COOKIE.length > 0 ? "Skip for now" : "");
+    // The four steps are all present up front — the flow is a URL sequence, not
+    // a JavaScript state machine, so nothing is hidden from a no-JS visitor.
+    expect(html).toContain("Welcome");
+    expect(html).toContain("Personal details");
+    expect(html).toContain("Business or later");
+    expect(html).toContain("Complete");
+    expect(html).toContain("Skip for now");
+    // Step 1 only links onward; it must not render a form that posts nowhere.
+    expect(html).toContain('href="/onboarding/profile"');
   });
 
-  it("completes onboarding: creates a dynamic QR, marks onboarded, redirects to /app/:id", async () => {
+  it("walks details -> business -> complete without creating a QR", async () => {
     const user = await createUser(env.DB, `obc-${crypto.randomUUID()}@example.com`);
     const setCookie = await startSession(env, user.id);
     const cookie = setCookie.split(";")[0];
+    const post = (path: string, body: Record<string, string>) =>
+      onboarding.fetch(
+        new Request(`https://q.test${path}`, {
+          method: "POST",
+          headers: {
+            Cookie: cookie,
+            "content-type": "application/x-www-form-urlencoded",
+          },
+          body: new URLSearchParams(body).toString(),
+        }),
+        env,
+        ctx,
+      );
 
-    const body = new URLSearchParams();
-    body.set("type", "url");
-    body.set("title", "My launch link");
-    body.set("fields_json", JSON.stringify({ url: "acme.example.com" }));
+    // Step 2 saves the profile and moves on.
+    const details = await post("/onboarding/profile", {
+      name: "Ada Lovelace",
+      phone: "+1 555 0100",
+      avatar_key: "",
+    });
+    expect(details.status).toBe(302);
+    expect(details.headers.get("location")).toBe("/onboarding/business");
+
+    const saved = await env.DB.prepare("SELECT name, phone FROM users WHERE id = ?")
+      .bind(user.id)
+      .first<{ name: string | null; phone: string | null }>();
+    expect(saved?.name).toBe("Ada Lovelace");
+    expect(saved?.phone).toBe("+1 555 0100");
+
+    // Step 3 can be skipped entirely — that is a first-class path, not an error.
+    const complete = await post("/onboarding/complete", {});
+    expect(complete.status).toBe(302);
+    const loc = complete.headers.get("location") ?? "";
+    expect(loc).toBe("/app?notice=onboarding-complete");
+
+    const updated = await env.DB.prepare("SELECT onboarded_at FROM users WHERE id = ?")
+      .bind(user.id)
+      .first<{ onboarded_at: number | null }>();
+    expect(updated?.onboarded_at).toBeTypeOf("number");
+
+    // Onboarding deliberately creates no QR: the dashboard's own empty state
+    // owns that decision, where it can explain dynamic vs static in context.
+    const qrs = await env.DB.prepare("SELECT COUNT(*) AS n FROM qr_codes WHERE user_id = ?")
+      .bind(user.id)
+      .first<{ n: number }>();
+    expect(qrs?.n).toBe(0);
+  });
+
+  it("creates a business on step 3 and makes it the active scope", async () => {
+    const user = await createUser(env.DB, `obb-${crypto.randomUUID()}@example.com`);
+    const setCookie = await startSession(env, user.id);
+    const cookie = setCookie.split(";")[0];
 
     const res = await onboarding.fetch(
-      new Request("https://q.test/onboarding/complete", {
+      new Request("https://q.test/onboarding/business", {
         method: "POST",
         headers: {
           Cookie: cookie,
           "content-type": "application/x-www-form-urlencoded",
         },
-        body: body.toString(),
+        body: new URLSearchParams({
+          name: "Analytical Engines",
+          category: "cafe",
+          address: "12 Connaught Place",
+          city: "New Delhi",
+          state: "Delhi",
+          country: "India",
+        }).toString(),
       }),
       env,
       ctx,
     );
     expect(res.status).toBe(302);
-    const loc = res.headers.get("location") ?? "";
-    expect(loc).toMatch(/^\/app\/[0-9a-f-]+$/);
+    expect(res.headers.get("location")).toBe("/onboarding/complete");
 
-    // The user is now marked onboarded.
-    const updated = await env.DB.prepare(
-      "SELECT onboarded_at FROM users WHERE id = ?",
+    const row = await env.DB.prepare(
+      `SELECT u.current_business_id, b.name AS biz
+         FROM users u
+         JOIN businesses b ON b.id = u.current_business_id
+        WHERE u.id = ?`,
     )
       .bind(user.id)
-      .first<{ onboarded_at: number | null }>();
-    expect(updated?.onboarded_at).toBeTypeOf("number");
-
-    // A dynamic URL QR was created with a short_code + normalized destination.
-    const qrId = loc.split("/").pop()!;
-    const qrRow = await env.DB.prepare("SELECT * FROM qr_codes WHERE id = ?")
-      .bind(qrId)
-      .first<{ is_dynamic: number; short_code: string | null; destination: string | null }>();
-    expect(qrRow?.is_dynamic).toBe(1);
-    expect(qrRow?.short_code).toBeTruthy();
-    expect(qrRow?.destination).toBe("https://acme.example.com");
+      .first<{ current_business_id: string | null; biz: string }>();
+    expect(row?.biz).toBe("Analytical Engines");
   });
 
-  it("skips onboarding: marks onboarded and redirects to /app", async () => {
-    const user = await createUser(env.DB, `obs-${crypto.randomUUID()}@example.com`);
+  it("re-renders step 3 with errors and writes nothing when a required field is blank", async () => {
+    const user = await createUser(env.DB, `obe-${crypto.randomUUID()}@example.com`);
     const setCookie = await startSession(env, user.id);
     const cookie = setCookie.split(";")[0];
 
     const res = await onboarding.fetch(
-      new Request("https://q.test/onboarding/skip", { headers: { Cookie: cookie } }),
+      new Request("https://q.test/onboarding/business", {
+        method: "POST",
+        headers: {
+          Cookie: cookie,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          name: "",
+          category: "cafe",
+          address: "12 Connaught Place",
+          city: "New Delhi",
+          state: "Delhi",
+          country: "India",
+        }).toString(),
+      }),
       env,
       ctx,
     );
-    expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe("/app");
+    expect(res.status).toBe(422);
+    expect(await res.text()).toContain("Business name is required");
 
-    const updated = await env.DB.prepare(
-      "SELECT onboarded_at FROM users WHERE id = ?",
-    )
-      .bind(user.id)
-      .first<{ onboarded_at: number | null }>();
-    expect(updated?.onboarded_at).toBeTypeOf("number");
+    const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM businesses")
+      .first<{ n: number }>();
+    expect(n?.n).toBe(0);
+  });
+
+  it("offers a no-JS skip on step 3 without nesting a form inside a form", async () => {
+    const user = await createUser(env.DB, `obf-${crypto.randomUUID()}@example.com`);
+    const setCookie = await startSession(env, user.id);
+    const cookie = setCookie.split(";")[0];
+
+    const res = await onboarding.fetch(
+      new Request("https://q.test/onboarding/business", { headers: { Cookie: cookie } }),
+      env,
+      ctx,
+    );
+    const html = await res.text();
+    expect(html).toContain("do this later");
+    // Native formaction override, so the skip works with scripting disabled and
+    // BusinessForm's own <form> stays a single, valid form.
+    expect(html).toContain('formaction="/onboarding/complete"');
+    expect(html).not.toContain("<form method=\"post\" action=\"/onboarding/complete\"");
+  });
+
+  it("finishes on the dashboard and creates no QR", async () => {
+    const user = await createUser(env.DB, `obd-${crypto.randomUUID()}@example.com`);
+    const setCookie = await startSession(env, user.id);
+    const cookie = setCookie.split(";")[0];
+
+    const res = await onboarding.fetch(
+      new Request("https://q.test/onboarding/complete", { headers: { Cookie: cookie } }),
+      env,
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("Go to dashboard");
+    // The old flow's CTA promised a QR it never explained; it must not return.
+    expect(html).not.toContain("Create my first QR");
+    // Still on the last step, so there is no skip — finishing *is* the action.
+    expect(html).not.toContain("Skip to dashboard");
+  });
+
+  it("skips onboarding: marks onboarded and redirects to /app", async () => {
+const user = await createUser(env.DB, `obs-${crypto.randomUUID()}@example.com`);
+      const setCookie = await startSession(env, user.id);
+      const cookie = setCookie.split(";")[0];
+
+      const res = await onboarding.fetch(
+        new Request("https://q.test/onboarding/skip", {
+          method: "POST",
+          headers: { Cookie: cookie },
+        }),
+        env,
+        ctx,
+      );
+      expect(res.status).toBe(302);
+      expect(res.headers.get("location")).toBe("/app");
+
+      const updated = await env.DB.prepare(
+        "SELECT onboarded_at FROM users WHERE id = ?",
+      )
+        .bind(user.id)
+        .first<{ onboarded_at: number | null }>();
+      expect(updated?.onboarded_at).toBeTypeOf("number");
   });
 });

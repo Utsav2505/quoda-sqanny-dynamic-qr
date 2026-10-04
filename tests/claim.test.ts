@@ -2,8 +2,12 @@ import { env } from "cloudflare:test";
 import { describe, it, expect } from "vitest";
 import { redirect } from "../src/routes/redirect";
 import { normalizeClaimUrl } from "../src/routes/claim";
+import { normalizeUrl } from "../src/lib/validate";
 import { safeNextPath } from "../src/lib/auth/magic-link";
-import { createUser, createQr, getQrByShortCode, claimDestination } from "../src/db/queries";
+import { createUser, createQr, getQrByShortCode, createBusiness, claimDestination } from "../src/db/queries";
+import { registerAsset } from "../src/db/qr-registry";
+import { claimQr } from "../src/lib/claim";
+import { generateIdentifier } from "../src/lib/qr-registration";
 import { startSession } from "../src/lib/auth/session";
 
 /**
@@ -60,10 +64,72 @@ async function seedDeferred(): Promise<{ code: string; id: string; ownerId: stri
   return { code, id: qr.id, ownerId: owner.id };
 }
 
+/**
+ * A physical stand: a `qr_registry` row claimed to a business, with the
+ * configuration row it owns deliberately left WITHOUT a destination (the
+ * `claimed` / "Setup pending" state).
+ *
+ * This is the row that must be unreachable from the legacy deferred-destination
+ * path: the registry service is the only writer of a stand's destination.
+ */
+async function seedStand(): Promise<{ code: string; ownerId: string; serial: string }> {
+  const ownerId = await seedUserWithSession().then((s) => s.id);
+  const business = await createBusiness(env.DB, ownerId, {
+    name: "Stand Cafe",
+    category: "cafe",
+    address: "1 Road",
+    city: "Delhi",
+    state: "Delhi",
+    country: "IN",
+  });
+  const serial = generateIdentifier();
+  await registerAsset(env.DB, serial);
+  const result = await claimQr(
+    env.DB,
+    {
+      identifier: serial,
+      viewerId: ownerId,
+      businessId: business.id,
+      name: "Counter",
+      category: "reviews",
+      placement: null,
+      destination: "https://example.com",
+    },
+    "pro",
+  );
+  if (!result.ok) throw new Error(`seedStand: claim failed (${result.reason})`);
+  // Blank the destination to reach the half-configured state.
+  await env.DB.prepare("UPDATE qr_codes SET destination = NULL WHERE id = ?")
+    .bind(result.asset.qr_code_id)
+    .run();
+  return { code: result.asset.short_code!, ownerId, serial };
+}
+
+/** The owner of a stand seeded by seedStand. */
+async function standOwnerId(code: string): Promise<string> {
+  const row = await env.DB.prepare("SELECT user_id FROM qr_codes WHERE short_code = ?")
+    .bind(code)
+    .first<{ user_id: string }>();
+  return row!.user_id;
+}
+
 async function seedUserWithSession() {
   const u = await createUser(env.DB, `cu-${crypto.randomUUID()}@example.com`);
   const setCookie = await startSession(env, u.id);
   return { id: u.id, cookie: setCookie.split(";")[0] };
+}
+
+/**
+ * A session for an EXISTING user.
+ *
+ * Needed because setting a destination is owner-scoped. A fresh account per test
+ * is fine for every other suite here, but this one has to act as the account that
+ * actually owns the code — which is exactly the boundary the tests below exist to
+ * pin down.
+ */
+async function sessionFor(userId: string) {
+  const setCookie = await startSession(env, userId);
+  return { id: userId, cookie: setCookie.split(";")[0] };
 }
 
 function get(code: string, cookie?: string) {
@@ -99,16 +165,30 @@ describe("GET /r/:code with a deferred destination", () => {
     expect(html).not.toContain('name="url"');
   });
 
-  it("shows the form to a signed-in visitor", async () => {
-    const { code } = await seedDeferred();
-    const s = await seedUserWithSession();
-    const res = await dispatch(get(code, s.cookie));
+  it("shows the form to the OWNER, and only to the owner", async () => {
+    const { code, ownerId } = await seedDeferred();
+    const owner = await sessionFor(ownerId);
+    const res = await dispatch(get(code, owner.cookie));
     const html = await res.text();
     expect(html).toContain('name="url"');
     expect(html).toContain(`action="/r/${code}/claim"`);
     // The owner's email is disclosed to whoever scans, so only ever the
     // signed-in account's own address.
     expect(html).not.toContain("Sign in to set the destination");
+  });
+
+  it("does NOT show the form to a different signed-in visitor", async () => {
+    // Being signed in is not authority over somebody else's code. Offering the
+    // form here would advertise an action the handler is guaranteed to refuse,
+    // and it was the first half of a cross-tenant hijack.
+    const { code } = await seedDeferred();
+    const stranger = await seedUserWithSession();
+    const html = await (await dispatch(get(code, stranger.cookie))).text();
+    expect(html).not.toContain('name="url"');
+    // They get somewhere to go rather than a dead end, and learn nothing about
+    // who owns it.
+    expect(html).toContain("/qrs");
+    expect(html).not.toContain("ownerId");
   });
 
   it("surfaces an error message passed as a query param", async () => {
@@ -144,8 +224,8 @@ describe("POST /r/:code/claim", () => {
   });
 
   it("sets the destination and bounces back through /r/:code", async () => {
-    const { code, id } = await seedDeferred();
-    const s = await seedUserWithSession();
+    const { code, id, ownerId } = await seedDeferred();
+    const s = await sessionFor(ownerId);
     const res = await dispatch(
       post(code, "url=https%3A%2F%2Fexample.com%2Fmenu", s.cookie),
     );
@@ -160,8 +240,8 @@ describe("POST /r/:code/claim", () => {
   });
 
   it("a configured code now redirects instead of showing the claim page", async () => {
-    const { code } = await seedDeferred();
-    const s = await seedUserWithSession();
+    const { code, ownerId } = await seedDeferred();
+    const s = await sessionFor(ownerId);
     await dispatch(post(code, "url=https%3A%2F%2Fexample.com%2Fmenu", s.cookie));
 
     const res = await dispatch(get(code, s.cookie));
@@ -169,9 +249,45 @@ describe("POST /r/:code/claim", () => {
     expect(res.headers.get("location")).toBe("https://example.com/menu");
   });
 
+  it("will NOT let a different account set the destination", async () => {
+    // THE hijack test. `claimDestination` used to carry no ownership predicate
+    // at all, so any signed-in account that learned a short code could point
+    // somebody else's printed label at a URL of their choosing — a stored open
+    // redirect served from a physical stand, and recorded in the audit trail as
+    // if the attacker had been authorised.
+    const { code, ownerId } = await seedDeferred();
+    const attacker = await seedUserWithSession();
+    expect(attacker.id).not.toBe(ownerId);
+
+    const res = await dispatch(
+      post(code, "url=https%3A%2F%2Fattacker.example%2Fsteal", attacker.cookie),
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe(`/r/${code}?error=not-owner`);
+
+    // Unchanged, and still attributable to nobody.
+    const qr = await getQrByShortCode(env.DB, code);
+    expect(qr?.destination).toBeNull();
+    expect(qr?.destination_claimed_by).toBeNull();
+  });
+
+  it("refuses a physical Sqanny Stand, whose destination the registry owns", async () => {
+    // A stand is not a deferred studio code: it has a serial, a lifecycle and a
+    // business, all owned by the registry service. Letting this legacy path write
+    // its destination would give the same field two authorities.
+    const { code } = await seedStand();
+    const owner = await sessionFor(await standOwnerId(code));
+
+    const res = await dispatch(
+      post(code, "url=https%3A%2F%2Fattacker.example%2Fsteal", owner.cookie),
+    );
+    expect(res.headers.get("location")).toBe(`/r/${code}?error=managed-elsewhere`);
+    expect((await getQrByShortCode(env.DB, code))?.destination).toBeNull();
+  });
+
   it("rejects a non-http scheme instead of creating a script-injection redirect", async () => {
-    const { code } = await seedDeferred();
-    const s = await seedUserWithSession();
+    const { code, ownerId } = await seedDeferred();
+    const s = await sessionFor(ownerId);
     for (const url of [
       "javascript:alert(1)",
       "data:text/html,<script>alert(1)</script>",
@@ -186,8 +302,8 @@ describe("POST /r/:code/claim", () => {
   });
 
   it("rejects a malformed or empty url", async () => {
-    const { code } = await seedDeferred();
-    const s = await seedUserWithSession();
+    const { code, ownerId } = await seedDeferred();
+    const s = await sessionFor(ownerId);
     for (const body of ["", "url=", "url=notaurl", "url=https%3A%2F%2F"]) {
       const res = await dispatch(post(code, body, s.cookie));
       expect(res.headers.get("location")).toBe(`/r/${code}?error=invalid-url`);
@@ -206,14 +322,14 @@ describe("POST /r/:code/claim", () => {
     expect(res.status).toBe(404);
   });
 
-  it("is first-come-first-served when two visitors race", async () => {
-    const { code } = await seedDeferred();
-    const a = await seedUserWithSession();
-    const b = await seedUserWithSession();
+  it("is first-come-first-served when two OWNERS race", async () => {
+    const { code, ownerId } = await seedDeferred();
+    const a = await sessionFor(ownerId);
 
     const [ra, rb] = await Promise.all([
       claimDestination(env.DB, code, "https://a.test", a.id),
-      claimDestination(env.DB, code, "https://b.test", b.id),
+      // The same owner from two tabs — the realistic race for a deferred code.
+      claimDestination(env.DB, code, "https://b.test", a.id),
     ]);
 
     // Exactly one winner, whatever the interleaving.
@@ -223,19 +339,24 @@ describe("POST /r/:code/claim", () => {
     expect(["https://a.test", "https://b.test"]).toContain(qr?.destination);
   });
 
-  it("reports not-found distinctly from already-set", async () => {
-    const { code } = await seedDeferred();
-    const s = await seedUserWithSession();
-    expect(await claimDestination(env.DB, "nosuchcode", "https://x.test", s.id)).toBe("not-found");
-    expect(await claimDestination(env.DB, code, "https://x.test", s.id)).toBe("claimed");
-    expect(await claimDestination(env.DB, code, "https://y.test", s.id)).toBe("already-set");
+  it("reports not-found, not-owner and already-set distinctly", async () => {
+    const { code, ownerId } = await seedDeferred();
+    const owner = await sessionFor(ownerId);
+    const stranger = await seedUserWithSession();
+
+    expect(await claimDestination(env.DB, "nosuchcode", "https://x.test", owner.id)).toBe("not-found");
+    // A stranger gets a refusal that does not confirm anything beyond what
+    // scanning the code already revealed.
+    expect(await claimDestination(env.DB, code, "https://x.test", stranger.id)).toBe("not-owner");
+    expect(await claimDestination(env.DB, code, "https://x.test", owner.id)).toBe("claimed");
+    expect(await claimDestination(env.DB, code, "https://y.test", owner.id)).toBe("already-set");
   });
 
   it("rate-limits repeated claims from one IP", async () => {
-    const s = await seedUserWithSession();
     let limited = 0;
     for (let i = 0; i < 12; i++) {
-      const { code } = await seedDeferred();
+      const { code, ownerId } = await seedDeferred();
+      const s = await sessionFor(ownerId);
       const res = await dispatch(
         post(code, "url=https%3A%2F%2Fexample.com", s.cookie),
       );
@@ -248,7 +369,7 @@ describe("POST /r/:code/claim", () => {
 describe("normalizeClaimUrl", () => {
   it("accepts http and https and normalises them", () => {
     expect(normalizeClaimUrl("https://example.com/menu")).toBe("https://example.com/menu");
-    expect(normalizeClaimUrl("http://example.com")).toBe("http://example.com/");
+    expect(normalizeClaimUrl("http://example.com")).toBe("http://example.com");
   });
 
   it("rejects every non-http scheme", () => {
@@ -271,15 +392,74 @@ describe("normalizeClaimUrl", () => {
     expect(normalizeClaimUrl(`https://x.test/${"a".repeat(3000)}`)).toBeNull();
   });
 
-  it("normalises a triple-slash input to a real (if odd) host", () => {
-    // "https:///path" parses with hostname "path" — it is not hostless, just a
-    // typo'd domain. Rejecting it would be guesswork about intent; it resolves
-    // to a normal host that simply will not exist, which is the honest outcome.
-    expect(normalizeClaimUrl("https:///path")).toBe("https://path/");
+  it("rejects a host with no dot, the same as the shared normalizer", () => {
+    // Was "https://path/" — the local parser accepted it because it only checked
+    // that a hostname existed. Now this route defers to the one product-wide
+    // policy, so `https:///path` is refused the same way a business website of
+    // the same shape is. Guessing at intent was the wrong trade: a destination
+    // is configuration, and configuration has one rule.
+    expect(normalizeClaimUrl("https:///path")).toBeNull();
+    expect(normalizeClaimUrl("http://localhost:8787/x")).toBeNull();
+  });
+});
+
+/**
+ * There was once a second destination parser — `normalizeClaimUrl` in
+ * routes/claim.tsx — alongside the shared `normalizeUrl` in lib/validate.ts, and
+ * they disagreed on policy. Three separate parsers existed once this was counted
+ * (the studio API carried its own, which accepted `mailto:` and no host at all).
+ *
+ * All of them now resolve to `normalizeUrl`. That is the whole point of the block
+ * below: it pins that there is ONE policy, so the next hand-written parser is a
+ * review finding rather than something a user discovers by getting a different
+ * answer from a different screen.
+ */
+describe("there is one destination normalizer, not several", () => {
+  const MUST_REJECT = [
+    "javascript:alert(1)",
+    "data:text/html,x",
+    "file:///etc/passwd",
+    "ftp://example.com",
+    "mailto:a@b.test",
+    "tel:+15551234",
+    "vbscript:msgbox(1)",
+    "blob:https://example.com/x",
+  ];
+
+  it("no normalizer ever returns a non-http(s) URL", () => {
+    for (const bad of MUST_REJECT) {
+      expect(normalizeClaimUrl(bad), `normalizeClaimUrl: ${bad}`).toBeNull();
+      expect(normalizeUrl(bad), `normalizeUrl: ${bad}`).toBeNull();
+    }
+  });
+
+  it("the two entry points agree on every input", () => {
+    for (const input of [
+      "https://example.com/menu",
+      "http://example.com",
+      "example.com",
+      "example.com:8080/x",
+      "http://localhost:8787/x",
+      "https:///path",
+      "https://user:pw@example.com/x",
+      "notaurl",
+      "",
+    ]) {
+      expect(normalizeClaimUrl(input), `input: ${input}`).toBe(normalizeUrl(input));
+    }
+  });
+
+  it("one of them supplies a scheme and requires a dotted host", () => {
+    // Both behaviours now come from lib/validate, so both flows give the same
+    // answer for the same typing: "example.com" becomes a URL, and a host with
+    // no dot is refused as a typo rather than accepted as a live destination.
+    expect(normalizeClaimUrl("example.com")).toBe("https://example.com");
+    expect(normalizeClaimUrl("http://localhost:8787/x")).toBeNull();
   });
 });
 
 describe("safeNextPath (open-redirect guard)", () => {
+
   it("accepts a normal same-origin path", () => {
     expect(safeNextPath("/r/abc123")).toBe("/r/abc123");
     expect(safeNextPath("/app?q=1")).toBe("/app?q=1");
@@ -308,5 +488,42 @@ describe("safeNextPath (open-redirect guard)", () => {
     expect(safeNextPath(null)).toBeNull();
     expect(safeNextPath("")).toBeNull();
     expect(safeNextPath(`/${"a".repeat(600)}`)).toBeNull();
+  });
+});
+
+describe("normalizeUrl (the shared destination normalizer)", () => {
+  it("adds a scheme to a bare host and keeps real paths", () => {
+    expect(normalizeUrl("example.com")).toBe("https://example.com");
+    expect(normalizeUrl("example.com/menu?a=1")).toBe("https://example.com/menu?a=1");
+    expect(normalizeUrl("http://example.com")).toBe("http://example.com");
+  });
+
+  it("does not mistake a port for a scheme", () => {
+    // "example.com:8080" is a host and a port, not a "example.com" scheme.
+    expect(normalizeUrl("example.com:8080/x")).toBe("https://example.com:8080/x");
+  });
+
+  it("rejects a declared scheme that is not http(s)", () => {
+    // The regression: these have no "://", so a naive prefixer turned them into
+    // valid-looking https URLs. "mailto:a@b.test" in particular became
+    // "https://b.test" - the email's domain became a live destination.
+    expect(normalizeUrl("mailto:a@b.test")).toBeNull();
+    expect(normalizeUrl("tel:+15551234")).toBeNull();
+    expect(normalizeUrl("javascript:alert(1)")).toBeNull();
+    expect(normalizeUrl("data:text/html,x")).toBeNull();
+    expect(normalizeUrl("vbscript:msgbox(1)")).toBeNull();
+  });
+
+  it("rejects a host with no dot, and embedded credentials", () => {
+    expect(normalizeUrl("http://localhost:8787/x")).toBeNull();
+    expect(normalizeUrl("https://")).toBeNull();
+    // Userinfo is a phishing shape and is never a legitimate destination here.
+    expect(normalizeUrl("https://user:pw@example.com/x")).toBeNull();
+  });
+
+  it("rejects empty and overlong input", () => {
+    expect(normalizeUrl("")).toBeNull();
+    expect(normalizeUrl("   ")).toBeNull();
+    expect(normalizeUrl(`https://x.test/${"a".repeat(3000)}`)).toBeNull();
   });
 });

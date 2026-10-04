@@ -2,13 +2,18 @@ import { Hono } from "hono";
 import type { FC } from "hono/jsx";
 import type { AppEnv } from "../middleware/auth";
 import { requireAuth } from "../middleware/auth";
-import { getQrById, type QrRow } from "../db/queries";
+import {
+  getQrById,
+  listBusinessesForUser,
+  type QrRow,
+} from "../db/queries";
+import { getRegistryByQrCodeId } from "../db/qr-registry";
 import type { QrDesign, QrFields } from "../lib/qr/types";
 import {
-  getTotals,
   getBreakdown,
   getUniques,
   getScans,
+  countScansForQrs,
   type ScanDetail,
 } from "../lib/analytics";
 import { encodeMatrix } from "../lib/qr/encoder";
@@ -21,6 +26,8 @@ import { Badge } from "../ui/components/badge";
 import { Stat } from "../ui/components/stat";
 import { QrPreview } from "../ui/components/qr-preview";
 import { Icon, type IconName } from "../ui/icons";
+import { EmptyState, EmptyStateButton } from "../ui/components/empty-state";
+import { Modal } from "../ui/components/modal";
 
 export const qrDetail = new Hono<AppEnv>();
 qrDetail.use("/app/*", requireAuth);
@@ -65,6 +72,25 @@ function renderQrImage(qr: QrRow, design: QrDesign, appUrl: string): string {
   }
 }
 
+/**
+ * A filename-safe slug from a QR's title.
+ *
+ * Duplicated from the API route's own slugifier rather than exported from it: a
+ * route module is not a utility module, and the two must agree on the filename —
+ * so when it changes it changes in both, which is what the shared copy makes
+ * obvious. Also the same transformation the server's Content-Disposition applies,
+ * which is why the saved file matches the requested name.
+ */
+function slug(value: string): string {
+  return (
+    (value || "sqanny-qr")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 48) || "sqanny-qr"
+  );
+}
+
 interface DetailViewProps {
   qr: QrRow;
   total: number;
@@ -79,10 +105,21 @@ interface DetailViewProps {
   scansTruncated: boolean;
   qrSvg: string;
   printedUrl: string | null;
+  /**
+   * Where "Edit"/"Manage" goes, and whether Delete exists.
+   *
+   * A physical stand is retired, never deleted: the printed code, its owner and
+   * its whole scan history survive archiving. The studio's Delete button used to
+   * be offered here anyway, which raised a FOREIGN KEY error from D1 and
+   * returned a bare 500. It is simply not offered for a stand, and the user is
+   * sent to the stand's own screen instead.
+   */
+  manageHref: string;
+  isStand: boolean;
   analyticsError?: boolean;
 }
 
-const DetailView: FC<DetailViewProps> = ({ qr, total, topCountry, topDevice, uniques, scans, scansTruncated, qrSvg, printedUrl, analyticsError }) => {
+const DetailView: FC<DetailViewProps> = ({ qr, total, topCountry, topDevice, uniques, scans, scansTruncated, qrSvg, printedUrl, manageHref, isStand, analyticsError }) => {
   const dynamic = qr.is_dynamic === 1;
   // A dynamic code with no destination is live but not yet going anywhere.
   // Rich/hosted types always carry a /p/ destination, so this never fires for
@@ -110,8 +147,12 @@ const DetailView: FC<DetailViewProps> = ({ qr, total, topCountry, topDevice, uni
           </div>
         </div>
         <div class="qr-detail-actions">
-          <Button href={`/app/${qr.id}/edit`} variant="secondary" iconLeft={<Icon name="settings" size={16} />}>Edit</Button>
-          <Button variant="ghost" iconLeft={<Icon name="close" size={16} />} class="qr-detail-delete" data-delete aria-label="Delete this QR code">Delete</Button>
+          <Button href={manageHref} variant="secondary" iconLeft={<Icon name="settings" size={16} />}>
+            {isStand ? "Manage stand" : "Edit"}
+          </Button>
+          {isStand ? null : (
+            <Button variant="ghost" iconLeft={<Icon name="close" size={16} />} class="qr-detail-delete" data-delete aria-label="Delete this QR code">Delete</Button>
+          )}
         </div>
       </header>
 
@@ -121,7 +162,22 @@ const DetailView: FC<DetailViewProps> = ({ qr, total, topCountry, topDevice, uni
           <div class="card qr-detail-code-card">
             <QrPreview svg={qrSvg} label={`QR code for ${qr.title}`} />
             <div class="qr-detail-downloads">
-              <Button href={`/api/qr/${qr.id}.svg`} variant="secondary" iconLeft={<Icon name="download" size={16} />}>Download SVG</Button>
+              {/* data-download hands this to the download island, which supplies
+                  the in-flight state, the double-click guard and a real success
+                  or failure message. With scripting blocked it degrades to a
+                  plain link to a URL that carries `Content-Disposition:
+                  attachment`, so it still downloads. */}
+              <Button
+                href={`/api/qr/${qr.id}.svg`}
+                variant="secondary"
+                iconLeft={<Icon name="download" size={16} />}
+                data-download={`/api/qr/${qr.id}.svg`}
+                data-download-filename={`${slug(qr.title)}.svg`}
+                data-download-label="Download SVG"
+                data-download-busy="Downloading…"
+              >
+                Download SVG
+              </Button>
             </div>
           </div>
 
@@ -133,11 +189,12 @@ const DetailView: FC<DetailViewProps> = ({ qr, total, topCountry, topDevice, uni
                   <div class="qr-detail-printed">
                     <span class="field-label">Printed code points to</span>
                     <div class="qr-detail-printed-row">
-                      <code class="qr-detail-mono">{printedUrl}</code>
+                      <code class="qr-detail-mono" id="qr-detail-printed-url">{printedUrl}</code>
                       <Button
                         variant="ghost"
                         class="qr-detail-copy"
                         data-copy={printedUrl}
+                        data-copy-source="#qr-detail-printed-url"
                         iconLeft={<Icon name="copy" size={14} />}
                       >
                         Copy
@@ -439,16 +496,29 @@ qrDetail.get("/app/:id", async (c) => {
   const qr = await getQrById(c.env.DB, id);
   if (!qr || qr.user_id !== user.id) {
     return c.html(
-      <AppShell user={user} title="Not found">
-        <div class="empty-state">
-          <h1 class="t-display-md">QR code not found</h1>
-          <p class="t-body text-secondary">It may have been deleted, or it isn't yours.</p>
-          <Button href="/app" variant="primary">Back to dashboard</Button>
+      <AppShell user={user} title="Not found" active="dashboard">
+        <div class="page-narrow">
+          <EmptyState
+            icon="close"
+            title="QR code not found"
+            body="It may have been deleted, or it isn't yours."
+            action={<EmptyStateButton href="/app" label="Back to dashboard" />}
+          />
         </div>
       </AppShell>,
       404,
     );
   }
+
+  const businesses = await listBusinessesForUser(c.env.DB, user.id);
+
+  // A physical stand is retired, never deleted: the printed code, its owner and
+  // its whole scan history survive archiving. The studio's Delete button used to
+  // be offered here anyway, which raised a FOREIGN KEY error from D1 and
+  // returned a bare 500. It is simply not offered for a stand.
+  const registry =
+    qr.source === "registration" ? await getRegistryByQrCodeId(c.env.DB, qr.id) : null;
+  const manageHref = registry ? `/qrs/${registry.id}` : `/app/${qr.id}`;
 
   const design = { ...DEFAULT_DESIGN, ...safeJson<Partial<QrDesign>>(qr.design_json, {}) } as QrDesign;
 
@@ -462,8 +532,13 @@ qrDetail.get("/app/:id", async (c) => {
   let scansTruncated = false;
   let analyticsError = false;
   try {
+    // ONE source of truth for the scan total. This read the KV fast counter
+    // while /qrs and the dashboard read D1, so the same QR could show two
+    // different totals depending on which screen you were on — KV is
+    // eventually consistent and D1 is not, so the gap was real and widened with
+    // traffic.
     const [t, breakdown, u, scanRows] = await Promise.all([
-      getTotals(c.env, id),
+      countScansForQrs(c.env.DB, [id]).then((m) => m.get(id) ?? 0),
       getBreakdown(c.env, id),
       getUniques(c.env, id, 30),
       getScans(c.env, id, SCAN_PAGE_SIZE, 0),
@@ -488,19 +563,59 @@ qrDetail.get("/app/:id", async (c) => {
   const printedUrl = qr.is_dynamic === 1 && qr.short_code ? `${c.env.APP_URL}/r/${qr.short_code}` : null;
 
   return c.html(
-    <AppShell user={user} title={qr.title}>
+    // `businesses` and `active` matter here: without them the business switcher
+    // disappears and no nav item is marked current, so opening a QR dropped the
+    // user out of their business context and gave them no way back.
+    <AppShell
+      user={user}
+      title={qr.title}
+      active="dashboard"
+      businesses={businesses}
+      switchReturnTo={`/app/${qr.id}`}
+    >
       <DetailView
         qr={qr}
         total={total}
-        topCountry={topCountry && topCountry.name !== "unknown" ? topCountry : topCountry}
+        topCountry={topCountry}
         topDevice={topDevice}
         uniques={uniques}
         scans={scans}
         scansTruncated={scansTruncated}
         qrSvg={qrSvg}
         printedUrl={printedUrl}
+        manageHref={manageHref}
+        isStand={Boolean(registry)}
         analyticsError={analyticsError}
       />
+      {/* `registry` is what makes this a stand: a claimed stand is archived or
+          restored through the stand flow, never deleted, so offering Delete on
+          one would let a printed code be destroyed by a different path than the
+          one that created it. */}
+      {registry ? null : (
+        <Modal
+          id="qr-delete"
+          size="sm"
+          title={`Delete “${qr.title}”?`}
+          description="This can't be undone. Any printed codes stop pointing at this entry, and its scan history goes with it."
+          footer={
+            <>
+              <Button variant="ghost" type="button" data-modal-close>
+                Keep it
+              </Button>
+              <Button
+                variant="secondary"
+                type="button"
+                data-delete-confirm
+                data-busy-label="Deleting…"
+              >
+                Delete QR code
+              </Button>
+            </>
+          }
+        >
+          <p class="field-hint" data-delete-status role="status" aria-live="polite" />
+        </Modal>
+      )}
       <script src="/js/charts.js" defer></script>
     </AppShell>,
   );

@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { Bindings } from "./types";
+import { requireSameOrigin } from "./middleware/auth";
 
 // Public
 import { marketing } from "./routes/marketing";
@@ -15,15 +16,26 @@ import { wallpaperApi } from "./routes/api/wallpaper";
 import { auth } from "./routes/auth";
 import { onboarding } from "./routes/onboarding";
 import { dashboard } from "./routes/dashboard";
+import { businesses } from "./routes/businesses";
+import { profile } from "./routes/profile";
 import { settings } from "./routes/settings";
 import { studio } from "./routes/studio";
 import { qrDetail } from "./routes/qr-detail";
+import { qrs } from "./routes/qrs";
+import { batches } from "./routes/batches";
 import { qrApi } from "./routes/api/qr";
 import { analyticsApi } from "./routes/api/analytics";
 import { enrichApi } from "./routes/api/enrich";
 import { uploadApi } from "./routes/api/upload";
 
 const app = new Hono<{ Bindings: Bindings }>();
+
+// Every state-changing request is checked for a same-origin sender before any
+// route runs. The session cookie's SameSite=Lax already blocks the classic
+// cross-site form POST; this closes the gap Lax leaves open — a cross-site
+// top-level GET, which is how sign-out and the onboarding skip used to be
+// reachable from a hostile page. See middleware/auth.ts.
+app.use("*", requireSameOrigin);
 
 app.get("/healthz", (c) => c.json({ ok: true, service: "sqanny" }));
 
@@ -51,12 +63,25 @@ app.route("/", auth); // /login, /auth/verify, /auth/logout
 app.route("/", onboarding); // /onboarding*
 
 // --- App pages: static segments before the /app/:id param route ---
+// Order matters: /app/businesses/* must be registered before /app/:id, or
+// Hono would match a business id as a QR id.
 app.route("/", dashboard); // /app
 app.route("/", settings); // /app/settings
+app.route("/", businesses); // /app/businesses*
+app.route("/", profile); // /app/profile
 app.route("/", studio); // /app/new, /app/:id/edit
 app.route("/", qrDetail); // /app/:id  (registered last)
 
 // --- Dynamic QR + hosted landing pages ---
+// Registered BEFORE marketing, whose "/" is a catch-all home page: /q/:serial
+// has to be reached before anything can swallow it.
+//
+// `batches` is registered before `qrs` for the same reason `businesses` is
+// registered before `/app/:id`: /qrs/batches would otherwise match qrs'
+// `/qrs/:identifier` and be read as a serial number. There is a test asserting
+// the ordering, because it is invisible until it breaks.
+app.route("/", batches); // /qrs/batches*, must precede `qrs`
+app.route("/", qrs); // /q/:identifier, /qrs/claim*
 app.route("/", redirect); // /r/:code
 app.route("/", pages); // /p/:slug
 

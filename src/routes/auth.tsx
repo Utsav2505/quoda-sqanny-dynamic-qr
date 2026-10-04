@@ -201,11 +201,52 @@ auth.get("/auth/verify", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /auth/logout — destroy the session, clear the cookie, go home.
-// ---------------------------------------------------------------------------
+  // /auth/logout - destroy the session, clear the cookie, go home.
+  // ---------------------------------------------------------------------------
+  
+  /**
+   * POST /auth/logout - destroy the session, clear the cookie, go home.
+   *
+   * POST, not GET. The session cookie is `SameSite=Lax`, which deliberately
+   * permits cross-site top-level GET navigations - so a GET logout could be
+   * triggered from any page with a single `<img src="/auth/logout">`, silently
+   * signing the visitor out. A POST is not covered by that exception, so this can
+   * no longer be reached cross-site. The GET below exists only to explain that.
+   *
+   * 303, not 302: after a state change the browser must follow up with a GET, and
+   * a 302 leaves the client free to repeat the POST at the target. The cookie is
+   * already dead by then, so the difference is cosmetic — but the correct status
+   * costs nothing and removes the question entirely.
+   */
+  auth.post("/auth/logout", async (c) => {
+    const cleared = await endSession(c.env, c.req.raw);
+    c.header("Set-Cookie", cleared);
+    return c.redirect("/", 303);
+  });
 
-auth.get("/auth/logout", async (c) => {
-  const cleared = await endSession(c.env, c.req.raw);
-  c.header("Set-Cookie", cleared);
-  return c.redirect("/", 302);
-});
+/**
+   * GET /auth/logout - an explanation, not a logout.
+   *
+   * Still ends the session would be worse than the small CSRF surface, so it does
+   * not: this page renders a POST form and changes nothing on its own. Someone who
+   * followed an old bookmark or an already-open tab gets a clear choice instead of
+   * either a silent sign-out or a dead link.
+   */
+  auth.get("/auth/logout", (c) =>
+    c.html(
+      <AuthShell title="Sign out" icon={<Icon name="logout" size={24} />}>
+        <h1 class="auth-title t-heading-sm">Sign out of Sqanny?</h1>
+        <p class="auth-lead t-body text-secondary">
+          Signing out ends this session on this device.
+        </p>
+        <form method="post" action="/auth/logout" data-guard-submit>
+          <Button type="submit" block iconLeft={<Icon name="logout" />}>
+            Sign out
+          </Button>
+        </form>
+      <Button href="/app" variant="ghost" block>
+        Stay signed in
+      </Button>
+    </AuthShell>,
+  ),
+);

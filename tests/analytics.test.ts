@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 import { describe, it, expect, vi } from "vitest";
 import {
   logScan,
-  getTotals,
+  countScansForQrs,
   getDaily,
   getBreakdown,
   getUniques,
@@ -65,12 +65,15 @@ describe("logScan", () => {
     await logScan(env, { id: qrId }, mobileRequest());
     await logScan(env, { id: qrId }, mobileRequest());
 
-    const total = await env.SCAN_COUNTERS.get(`qr:${qrId}:total`);
+const total = await env.SCAN_COUNTERS.get(`qr:${qrId}:total`);
     const dayCount = await env.SCAN_COUNTERS.get(`qr:${qrId}:${day}`);
     expect(Number(total)).toBe(2);
     expect(Number(dayCount)).toBe(2);
 
-    expect(await getTotals(env, qrId)).toBe(2);
+    // The KV counter is an edge signal only. Every screen reads totals from D1,
+    // so a code cannot show 2 scans on one page and 1 on another while the KV
+    // value is still propagating.
+    expect((await countScansForQrs(env.DB, [qrId])).get(qrId)).toBe(2);
   });
 
   it("inserts scans rows with derived fields", async () => {

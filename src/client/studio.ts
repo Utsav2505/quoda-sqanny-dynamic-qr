@@ -1,6 +1,8 @@
 // Studio island — drives type switching, live preview, scannability warnings,
 // save, and SVG/PNG/PDF export. Dependency-free vanilla TS. Never fails silently.
 
+import { downloadBlob as saveBlob } from "./lib/download";
+
 interface QrDesign {
   fg: string;
   bg: string;
@@ -379,12 +381,19 @@ function init(): void {
   // -- save ----------------------------------------------------------------
   async function save(): Promise<void> {
     clearError();
+    // Sent on create and on edit alike: reassigning a code to another business
+    // is the same dropdown, and letting the two paths diverge would mean the
+    // field silently did nothing in one of them.
+    const businessSelect = document.querySelector<HTMLSelectElement>(
+      "[data-studio-business]",
+    );
     const body = {
       type: activeType,
       title: titleInput?.value ?? "",
       isDynamic: isDynamic(),
       content: readContent(),
       design: readDesign(),
+      business_id: businessSelect?.value || null,
       ...(RICH_TYPES.has(activeType) ? { page: readContent() } : {}),
       ...(isDynamic() && !RICH_TYPES.has(activeType)
         ? { destination: readContent().url ?? readContent().fileUrl ?? "" }
@@ -422,16 +431,15 @@ function init(): void {
     return t || "sqanny-qr";
   }
 
-  function downloadBlob(blob: Blob, filename: string): void {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
+  // Exports go through the shared helper (client/lib/download.ts). It was a local
+  // copy here, which meant this island silently lacked the filename sanitisation
+  // every other download had: `exportName()` is derived from the user's title, so a
+  // title containing "/" or ":" produced a filename the filesystem would mangle or
+  // split, and only on this island.
+  const downloadBlob = (blob: Blob, filename: string): void => {
+    const res = saveBlob(blob, filename);
+    if (!res.ok) showError("Couldn't prepare the file. Please try again.");
+  };
 
   function exportSvg(): void {
     const svg = currentSvg();

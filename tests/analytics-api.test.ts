@@ -54,7 +54,9 @@ describe("GET /api/qr/:id/analytics", () => {
       env,
       ctx,
     );
-    expect(res.status).toBe(302);
+    // 401 JSON, not a 302 to the login page — see requireApiAuth.
+    expect(res.status).toBe(401);
+    expect((await res.json() as { ok: boolean }).ok).toBe(false);
   });
 
   it("returns 404 for another user's QR (ownership enforced)", async () => {
@@ -184,7 +186,8 @@ describe("GET /api/qr/:id/scans", () => {
 
   it("requires auth", async () => {
     const res = await analyticsApi.fetch(get("/api/qr/whatever/scans"), env, ctx);
-    expect(res.status).toBe(302);
+    expect(res.status).toBe(401);
+    expect((await res.json() as { ok: boolean }).ok).toBe(false);
   });
 
   it("returns 404 for another user's QR — raw IPs must not leak across accounts", async () => {

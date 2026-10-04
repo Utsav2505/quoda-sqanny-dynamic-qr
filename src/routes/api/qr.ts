@@ -1,15 +1,22 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../middleware/auth";
-import { requireAuth } from "../../middleware/auth";
+import { requireApiAuth } from "../../middleware/auth";
 import {
   createQr,
   getQrById,
   updateQr,
-  deleteQr,
+  deleteQrForUser,
   upsertDynamicPage,
+  getBusinessForUser,
   type QrRow,
   type DynamicPageKind,
 } from "../../db/queries";
+import {
+  getRegistryByQrCodeId,
+  moveAssetBusiness,
+  setAssetDestination,
+} from "../../db/qr-registry";
+import { normalizeUrl } from "../../lib/validate";
 import type { QrType } from "../../types";
 import type { QrDesign, QrFields } from "../../lib/qr/types";
 import { buildPayload } from "../../lib/qr/content";
@@ -20,10 +27,15 @@ import { ensureUniqueShortCode } from "../../lib/shortcode";
 import { canCreateDynamic } from "../../lib/plans";
 
 export const qrApi = new Hono<AppEnv>();
-qrApi.use("/api/qr/*", requireAuth);
+qrApi.use("/api/qr/*", requireApiAuth);
 
 // ---------------------------------------------------------------------------
 // Shared validation / normalisation
+//
+// `normalizeUrl` is imported from lib/validate rather than redefined. This file
+// used to carry a third, looser policy that accepted `mailto:` and never
+// required a host, while the claim flow required a dotted hostname â€” so one URL
+// could be stored by this route and rejected by the other. One policy, one place.
 // ---------------------------------------------------------------------------
 
 const QR_TYPES: readonly QrType[] = [
@@ -73,7 +85,7 @@ function normalizeDesign(input: unknown): QrDesign {
   const design: QrDesign = { fg, bg, moduleShape, eyeStyle, ecc };
   if (typeof d.logo === "string" && d.logo.length > 0) {
     design.logo = d.logo;
-    // A centered logo knocks out ~22% of modules — force max error correction
+    // A centered logo knocks out ~22% of modules â€” force max error correction
     // so the code still decodes regardless of the requested ECC level.
     design.ecc = "H";
   }
@@ -174,7 +186,7 @@ function parseLabeledLinks(text: string): Array<{ label: string; url: string }> 
     if (!line) continue;
     const parts = line.split("|").map((s) => s.trim());
     const [label, url] = parts.length >= 2 ? parts : [parts[0], parts[0]];
-    if (url) links.push({ label: label || url, url: normalizeUrl(url) });
+    if (url) links.push({ label: label || url, url: normalizeUrl(url) ?? url });
   }
   return links;
 }
@@ -216,10 +228,12 @@ interface CreateBody {
   design?: Record<string, unknown>;
   /** rich page payload (menu/business/social/appstore/pdf) */
   page?: Record<string, unknown>;
+  /** attach to a business on creation; null/undefined = not assigned */
+  business_id?: string | null;
 }
 
 // ---------------------------------------------------------------------------
-// POST /api/qr — create
+// POST /api/qr â€” create
 // ---------------------------------------------------------------------------
 
 qrApi.post("/api/qr", async (c) => {
@@ -239,6 +253,27 @@ qrApi.post("/api/qr", async (c) => {
   const title = (body.title ?? "").trim() || titleFromType(type);
   const design = normalizeDesign(body.design);
   const fields = normalizeFields(body.content);
+
+  // The business id arrives from the request body, so membership is verified
+  // before it is written. Without this check a caller could file a code under
+  // another tenant's business id and have it appear in their dashboard.
+  let businessId: string | null = null;
+  const requestedBusiness =
+    typeof body.business_id === "string" ? body.business_id.trim() : "";
+  if (requestedBusiness) {
+    const business = await getBusinessForUser(
+      c.env.DB,
+      requestedBusiness,
+      user.id,
+    );
+    if (!business || business.status !== "active") {
+      return c.json(
+        { ok: false, error: "That business isn't available." },
+        400,
+      );
+    }
+    businessId = business.id;
+  }
 
   // Rich types are forced dynamic; otherwise honour the toggle.
   const rich = isRich(type);
@@ -273,8 +308,24 @@ qrApi.post("/api/qr", async (c) => {
         dynamicKind = type as DynamicPageKind;
       } else {
         // Plain dynamic: redirect to the user's target. An empty value is the
-        // studio's "set the destination later" signal, not an error.
-        destination = normalizeUrl((body.destination ?? "").trim() || (fields.url ?? "").trim()) || null;
+        // studio's "set the destination later" signal, not an error â€” but a
+        // non-empty value that is NOT a valid http(s) URL is a mistake worth
+        // rejecting, because it would otherwise be stored and 302'd to later.
+        const rawDest = (body.destination ?? "").trim() || (fields.url ?? "").trim();
+        if (rawDest) {
+          destination = normalizeUrl(rawDest);
+          if (!destination) {
+            return c.json(
+              {
+                ok: false,
+                error: "That destination isn't a valid web address. Include https:// â€” or turn on 'Set the destination later' to leave it blank.",
+              },
+              400,
+            );
+          }
+        } else {
+          destination = null;
+        }
       }
 
       // Validate the printed image encodes (the /r/<code> redirect).
@@ -289,6 +340,7 @@ qrApi.post("/api/qr", async (c) => {
         destination,
         content_json: JSON.stringify(fields),
         design_json: JSON.stringify(design),
+        business_id: businessId,
       });
 
       if (rich) {
@@ -304,7 +356,7 @@ qrApi.post("/api/qr", async (c) => {
       return c.json({ ok: true, qr: row }, 201);
     }
 
-    // Static QR — validate by rendering (throws on missing required field).
+    // Static QR â€” validate by rendering (throws on missing required field).
     renderStatic(type, fields, design);
     const row = await createQr(c.env.DB, {
       user_id: user.id,
@@ -313,6 +365,7 @@ qrApi.post("/api/qr", async (c) => {
       is_dynamic: false,
       content_json: JSON.stringify(fields),
       design_json: JSON.stringify(design),
+      business_id: businessId,
     });
     return c.json({ ok: true, qr: row }, 201);
   } catch (err) {
@@ -321,7 +374,7 @@ qrApi.post("/api/qr", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// PATCH /api/qr/:id — update (ownership enforced)
+// PATCH /api/qr/:id â€” update (ownership enforced)
 // ---------------------------------------------------------------------------
 
 interface PatchBody {
@@ -330,6 +383,23 @@ interface PatchBody {
   content?: Record<string, unknown>;
   design?: Record<string, unknown>;
   page?: Record<string, unknown>;
+  /** reassign between businesses; null clears the assignment */
+  business_id?: string | null;
+}
+
+/**
+ * The registry row that owns this configuration, if any.
+ *
+ * A `source = 'registration'` row IS the configuration half of a physical stand.
+ * Writing to it has to go through the registry service so `qr_registry` and
+ * `qr_codes` cannot drift â€” otherwise the stand's business and status in the
+ * ledger disagree with its actual configuration, and /qrs (which reads through
+ * the ledger) shows the wrong business or "Setup pending" for a QR that is
+ * already serving traffic.
+ */
+async function registryForQr(db: D1Database, qr: QrRow) {
+  if (qr.source !== "registration") return null;
+  return getRegistryByQrCodeId(db, qr.id);
 }
 
 qrApi.patch("/api/qr/:id", async (c) => {
@@ -347,11 +417,50 @@ qrApi.patch("/api/qr/:id", async (c) => {
     return c.json({ ok: false, error: "Invalid JSON body." }, 400);
   }
 
-  const patch: Record<string, string | number> = {};
+  const registry = await registryForQr(c.env.DB, qr);
+  // A retired stand must stay retired: an edit is not a reason to start serving
+  // again. Refused before any field is written, so it is all-or-nothing.
+  if (registry?.status === "archived") {
+    return c.json(
+      {
+        ok: false,
+        error:
+          "This stand is retired, so it can't be edited. Restore it from your Sqanny Stands page first.",
+        code: "archived",
+      },
+      409,
+    );
+  }
+
+  const patch: Record<string, string | number | null> = {};
 
   if (typeof body.title === "string") {
     const t = body.title.trim();
     if (t) patch.title = t;
+  }
+
+  // Reassignment is membership-checked for the same reason creation is: the id
+  // comes from the client, and a code filed under someone else's business would
+  // surface in their dashboard. Only an explicit null (or "") clears it â€”
+  // omitting the key leaves the assignment alone, so a partial PATCH that
+  // happens not to mention a business cannot silently detach it.
+  let moveTo: string | null | undefined;
+  if (body.business_id !== undefined) {
+    const requested =
+      typeof body.business_id === "string" ? body.business_id.trim() : "";
+    if (!requested) {
+      moveTo = null;
+    } else {
+      const business = await getBusinessForUser(c.env.DB, requested, user.id);
+      if (!business || business.status !== "active") {
+        return c.json(
+          { ok: false, error: "That business isn't available." },
+          400,
+        );
+      }
+      moveTo = business.id;
+    }
+    if (!registry) patch.business_id = moveTo;
   }
 
   if (typeof body.design === "object" && body.design !== null) {
@@ -372,7 +481,38 @@ qrApi.patch("/api/qr/:id", async (c) => {
   }
 
   if (Object.keys(patch).length > 0) {
-    await updateQr(c.env.DB, id, patch);
+    const ok = await updateQr(c.env.DB, id, user.id, patch);
+    if (!ok) {
+      return c.json({ ok: false, error: "Not found." }, 404);
+    }
+  }
+
+  // The two registry-coupled writes go through the service, which keeps the
+  // ledger in step. They run only after the generic patch has been accepted, so a
+  // rejected field never leaves half the configuration applied.
+  if (registry && moveTo !== undefined && moveTo !== qr.business_id) {
+    const moved = await moveAssetBusiness(c.env.DB, {
+      qrCodeId: qr.id,
+      ownerId: user.id,
+      businessId: moveTo,
+    });
+    if (!moved.ok) {
+      return c.json(
+        { ok: false, error: "That business isn't available." },
+        400,
+      );
+    }
+  }
+
+  if (registry && typeof patch.destination === "string") {
+    const set = await setAssetDestination(c.env.DB, {
+      qrCodeId: qr.id,
+      ownerId: user.id,
+      destination: patch.destination,
+    });
+    if (!set.ok) {
+      return c.json({ ok: false, error: "Not found." }, 404);
+    }
   }
 
   // Rich page content lives in dynamic_pages; editing it never changes the QR image.
@@ -389,22 +529,37 @@ qrApi.patch("/api/qr/:id", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// DELETE /api/qr/:id — delete (ownership enforced)
+// DELETE /api/qr/:id â€” delete (ownership enforced, stands exempt)
 // ---------------------------------------------------------------------------
+
+const DELETE_REASONS: Record<"is-stand" | "has-scans", string> = {
+  "is-stand":
+    "This is a Sqanny Stand, so it can't be deleted. Retire it from your Sqanny Stands page instead â€” that keeps its permanent code and its scan history.",
+  "has-scans":
+    "This code has scan history, which is kept for your records. Create a new code instead of deleting this one.",
+};
 
 qrApi.delete("/api/qr/:id", async (c) => {
   const user = c.get("user")!;
   const id = c.req.param("id");
-  const qr = await getQrById(c.env.DB, id);
-  if (!qr || qr.user_id !== user.id) {
-    return c.json({ ok: false, error: "Not found." }, 404);
+  // deleteQrForUser re-derives ownership, provenance and scan history in the
+  // database rather than trusting this route's earlier read.
+  const result = await deleteQrForUser(c.env.DB, id, user.id);
+
+  if (!result.ok) {
+    if (result.reason === "not-found") {
+      return c.json({ ok: false, error: "Not found." }, 404);
+    }
+    return c.json(
+      { ok: false, error: DELETE_REASONS[result.reason], code: result.reason },
+      409,
+    );
   }
-  await deleteQr(c.env.DB, id);
   return c.json({ ok: true });
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/qr/preview — authed live preview (no strict rate-limit)
+// POST /api/qr/preview â€” authed live preview (no strict rate-limit)
 // ---------------------------------------------------------------------------
 
 interface PreviewBody {
@@ -415,7 +570,7 @@ interface PreviewBody {
 }
 
 qrApi.post("/api/qr/preview", async (c) => {
-  // Auth is enforced by qrApi.use("/api/qr/*", requireAuth); read the user to
+  // Auth is enforced by qrApi.use("/api/qr/*", requireApiAuth); read the user to
   // make that explicit (and to keep parity with the other handlers).
   c.get("user");
   let body: PreviewBody;
@@ -464,7 +619,7 @@ qrApi.post("/api/qr/preview", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/qr/:id.svg — the stored QR as a downloadable SVG image
+// GET /api/qr/:id.svg â€” the stored QR as a downloadable SVG image
 // ---------------------------------------------------------------------------
 
 qrApi.get("/api/qr/:id{.+\\.svg}", async (c) => {
@@ -493,7 +648,20 @@ qrApi.get("/api/qr/:id{.+\\.svg}", async (c) => {
     headers: {
       "content-type": "image/svg+xml; charset=utf-8",
       "cache-control": "no-store",
-      "content-disposition": `inline; filename="${slugify(qr.title)}.svg"`,
+      // `attachment`, not `inline` — THIS IS THE DOWNLOAD BUG.
+      //
+      // A browser that NAVIGATES to a displayable content type displays it. An
+      // SVG is displayable, so `inline` meant the "Download SVG" button opened
+      // the code in a tab and the user had to right-click → Save As.
+      //
+      // `attachment` is the response header that makes the navigation a download.
+      // The filename is derived from the QR's own title so it is deterministic
+      // and meaningful, rather than "download.svg".
+      //
+      // A consumer that genuinely wants to EMBED the code (the studio preview,
+      // an <img> tag) does not navigate here — it fetches the bytes or renders
+      // its own preview, neither of which is affected by a disposition header.
+      "content-disposition": `attachment; filename="${slugify(qr.title)}.svg"`,
     },
   });
 });
@@ -516,13 +684,6 @@ function parseFields(json: string): QrFields {
   } catch {
     return {};
   }
-}
-
-/** Add an https:// scheme to a bare host so dynamic destinations always resolve. */
-function normalizeUrl(raw: string): string {
-  if (!raw) return "";
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) || /^mailto:/i.test(raw)) return raw;
-  return `https://${raw}`;
 }
 
 function titleFromType(type: QrType): string {

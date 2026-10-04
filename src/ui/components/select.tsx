@@ -19,6 +19,8 @@ export interface SelectProps {
   disabled?: boolean;
   hideLabel?: boolean;
   class?: string;
+  /** arbitrary data-* hooks (island binding for conditional reveals) */
+  [key: `data-${string}`]: string | boolean | undefined;
 }
 
 /**
@@ -38,7 +40,9 @@ export const Select: FC<SelectProps> = ({
   disabled,
   hideLabel,
   class: cls,
+  ...rest
 }) => {
+  const passthrough = rest as Record<string, string | boolean | undefined>;
   const hintId = hint ? `${id}-hint` : undefined;
   const errorId = error ? `${id}-error` : undefined;
   const describedBy = [hintId, errorId].filter(Boolean).join(" ") || undefined;
@@ -62,6 +66,7 @@ export const Select: FC<SelectProps> = ({
           disabled={disabled}
           aria-invalid={error ? "true" : undefined}
           aria-describedby={describedBy}
+          {...passthrough}
         >
           {options.map((opt) => (
             <option value={opt.value} selected={opt.value === value} disabled={opt.disabled}>
@@ -74,12 +79,12 @@ export const Select: FC<SelectProps> = ({
         </span>
       </div>
       {hint && !error ? (
-        <p class="field-hint" id={hintId}>
+        <p class="field-hint" id={hintId} data-hint-for={id}>
           {hint}
         </p>
       ) : null}
       {error ? (
-        <p class="field-error" id={errorId} role="alert">
+        <p class="field-error" id={errorId} data-error-for={id} role="alert">
           {error}
         </p>
       ) : null}

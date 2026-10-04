@@ -218,10 +218,47 @@ export async function logScan(
   }
 }
 
-/** Total scans for a QR (from the KV fast counter). */
-export async function getTotals(env: Bindings, qrId: string): Promise<number> {
-  const v = await env.SCAN_COUNTERS.get(`qr:${qrId}:total`);
-  return Number(v) || 0;
+/**
+ * Scan totals for many QRs in ONE query.
+ *
+ * D1 is the system of record for every scan total in the product — dashboard,
+ * QR detail and the stand management list all read through here or an equivalent
+ * aggregate, so one screen can never disagree with another.
+ *
+ * There is deliberately no exported `getTotals(qrId)` reader for the KV counter
+ * any more, even though logScan still maintains it. It was exactly the trap this
+ * audit found: the dashboard read KV (eventually consistent, one round trip per
+ * code) while /qrs read D1, so the same QR showed two different totals depending
+ * on the screen, and the gap widened with traffic. The KV counter is kept only
+ * because it is a cheap operational signal for edge-cache analysis and alerting —
+ * not because anything renders it.
+ *
+ * An empty id list returns immediately: `IN ()` is a syntax error in SQLite.
+ */
+export async function countScansForQrs(
+  db: D1Database,
+  qrIds: string[],
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (!qrIds.length) return out;
+
+  // D1 caps bound parameters; chunk so a very large account degrades into a few
+  // queries rather than a hard failure.
+  const CHUNK = 100;
+  for (let i = 0; i < qrIds.length; i += CHUNK) {
+    const chunk = qrIds.slice(i, i + CHUNK);
+    const placeholders = chunk.map(() => "?").join(",");
+    const { results } = await db
+      .prepare(
+        `SELECT qr_id, COUNT(*) AS n FROM scans
+          WHERE qr_id IN (${placeholders})
+          GROUP BY qr_id`,
+      )
+      .bind(...chunk)
+      .all<{ qr_id: string; n: number }>();
+    for (const row of results ?? []) out.set(row.qr_id, Number(row.n));
+  }
+  return out;
 }
 
 /** Daily scan counts for the last `days` days, oldest-first. */

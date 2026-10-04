@@ -76,12 +76,25 @@ redirect.get("/r/:code", async (c) => {
   // --- Deferred destination: claim page, not a redirect --------------------
   if (!qr.destination) {
     const user = c.get("user");
+    // The form is only ever offered for a code the viewer OWNS. Showing it to
+    // any signed-in visitor is what let a stranger repoint somebody else's
+    // printed code; now that the write is owner-scoped the offer has to be too,
+    // or the page advertises an action that is guaranteed to be refused.
+    //
+    // A physical Sqanny Stand is never claimed here at all — its destination is
+    // owned by the registry service, reachable from the owner's stands page.
+    const isStand = qr.source === "registration";
+    const mine = Boolean(user) && qr.user_id === user!.id;
+    const claimable = !isStand && mine;
+
     return c.html(
       <ClaimPage
         title={qr.title}
         code={qr.short_code!}
-        signedIn={Boolean(user)}
-        email={user?.email ?? null}
+        signedIn={claimable}
+        email={claimable ? (user?.email ?? null) : null}
+        // An owned code reaches the owner through /qrs; a stranger gets nothing.
+        signedInElsewhere={Boolean(user) && !claimable}
         error={(c.req.query("error") as ClaimError | undefined) ?? null}
       />,
       200,
@@ -102,11 +115,19 @@ redirect.get("/r/:code", async (c) => {
  * POST /r/:code/claim — set a deferred destination.
  *
  * Plain HTML form POST (no client island), so it works without JavaScript.
- * Requires a signed-in account: the printed code is not a credential, so this
- * is the only thing stopping an anonymous visitor from repointing it.
+ * Requires a signed-in account AND that the caller owns the code: the ownership
+ * check lives in the conditional UPDATE itself (see claimDestination), so a
+ * hand-crafted POST naming someone else's short code moves nothing. The printed
+ * code is not a credential, so "signed in" was never sufficient authority —
+ * the code also has to be yours.
  *
- * First come, first served. The conditional UPDATE in claimDestination is the
- * arbiter, so a race between two visitors cannot produce two winners.
+ * A physical Sqanny Stand is refused outright. Its destination belongs to the
+ * registry service, which is the single place that may write it; this legacy
+ * path exists only for studio-created dynamic codes whose destination was left
+ * blank at print time.
+ *
+ * First come, first served among eligible callers. The conditional UPDATE is
+ * the arbiter, so a race between two of them cannot produce two winners.
  */
 redirect.post("/r/:code/claim", async (c) => {
   const code = c.req.param("code");
@@ -139,6 +160,13 @@ redirect.post("/r/:code/claim", async (c) => {
 
   const result = await claimDestination(c.env.DB, code, destination, user.id);
   if (result === "not-found") return c.text("Not Found", 404);
+
+  // Not yours, or a physical stand. Both are refusals, and neither is allowed to
+  // become a dead end: the page explains and, for a stand, points at the place
+  // the destination is actually managed from.
+  if (result === "not-owner" || result === "managed-elsewhere") {
+    return c.redirect(`/r/${code}?error=${result}`, 302);
+  }
 
   if (result === "already-set") {
     // Someone won the race. Send the visitor onward rather than showing a

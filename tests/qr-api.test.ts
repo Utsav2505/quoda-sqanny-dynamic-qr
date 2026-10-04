@@ -36,8 +36,17 @@ describe("POST /api/qr (create)", () => {
       env,
       ctx,
     );
-    expect(res.status).toBe(302); // requireAuth -> /login
-  });
+// 401 with a JSON body, NOT a 302 to the login page. A fetch() that
+      // follows the redirect gets HTML, `res.json()` throws a SyntaxError, and
+      // an expired session is reported to the user as "Couldn't save. Check your
+      // connection." A machine caller needs a status it can branch on.
+      expect(res.status).toBe(401);
+      const body = (await res.json()) as { ok: boolean; code?: string };
+      expect(body.ok).toBe(false);
+      expect(body.code).toBe("unauthenticated");
+      // And it must not redirect: a 302 here is what the old guard did.
+      expect(res.headers.get("location")).toBeNull();
+    });
 
   it("creates a static QR (row persisted, no short_code)", async () => {
     const { userId, cookie } = await seedSession();

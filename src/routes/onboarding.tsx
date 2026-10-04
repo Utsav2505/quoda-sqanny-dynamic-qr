@@ -1,600 +1,678 @@
 import { Hono } from "hono";
-import type { FC } from "hono/jsx";
-import type { QrType } from "../types";
-import type { QrDesign, QrFields } from "../lib/qr/types";
+import type { FC, PropsWithChildren } from "hono/jsx";
 import { requireAuth, type AppEnv } from "../middleware/auth";
 import { AppShell } from "../ui/app-shell";
 import { Button } from "../ui/components/button";
 import { Icon } from "../ui/icons";
-import type { IconName } from "../ui/icons";
-import { QrPreview } from "../ui/components/qr-preview";
+import { Avatar } from "../ui/components/avatar";
+import { Input } from "../ui/components/input";
+import { ImagePicker, BusinessForm } from "../ui/components/business-form";
 import {
-  createQr,
+  createBusiness,
+  countBusinessesForUser,
+  getUserById,
+  listBusinessesForUser,
+  setCurrentBusiness,
   setOnboarded,
-  upsertDynamicPage,
-  type DynamicPageKind,
+  updateUserProfile,
+  type BusinessSummary,
 } from "../db/queries";
-import { ensureUniqueShortCode } from "../lib/shortcode";
-import { buildPayload } from "../lib/qr/content";
-import { encodeMatrix } from "../lib/qr/encoder";
-import { renderSvg } from "../lib/qr/render-svg";
-import { safePalette } from "../lib/qr/scannability";
+import { withFlash } from "../lib/flash";
+import { storeImage, ownsKey } from "./api/upload";
+import { businessLocation } from "../lib/business";
+// The canonical business parser, imported rather than copied: onboarding and
+// /app/businesses/new must never disagree about what a valid business is, and a
+// second copy of these rules would drift the moment one of them changed.
+import { parseBusiness, echoValues } from "./businesses";
+import {
+  LIMITS,
+  cleanText,
+  orNull,
+  validateName,
+  validatePhone,
+} from "../lib/validate";
+import type { Bindings } from "../types";
 
 /**
- * Onboarding — a calm, encouraging 3-step guided first-QR flow.
+ * Onboarding — four steps, each one a URL.
  *
- *   1. Pick a type
- *   2. Enter content + light customization, with a live preview
- *   3. Confirm and "Make it permanent"
+ *   1. /onboarding            Welcome
+ *   2. /onboarding/profile    Personal details
+ *   3. /onboarding/business   A business, or later
+ *   4. /onboarding/complete   Ready
  *
- * The whole surface is one server-rendered page; a tiny self-contained island
- * (no build step) steps between the three panels and drives the live preview by
- * calling the public /api/preview endpoint. Submitting POSTs to
- * /onboarding/complete which creates the first QR, marks the user onboarded, and
- * redirects to /app/:id. The flow is skippable: "Skip for now" sets onboarded
- * and lands on /app.
+ * Two decisions make this a progressive flow rather than a wizard:
+ *
+ * The step lives in the URL, never in JavaScript state. Every step is a real GET
+ * that renders on its own, and every "continue" is a plain form POST or a link.
+ * With scripting blocked the flow still works end to end — the only thing lost
+ * is inline validation and the upload preview.
+ *
+ * No step is required. Profile can be skipped, and "I'll do this later" on the
+ * business step is a first-class button rather than a footnote link, because a
+ * user who came here to make a QR should never be held at a form they didn't ask
+ * for. Onboarding deliberately does not create a QR: the dashboard's own
+ * "Create your first QR" empty state is the right place to start that, and it
+ * explains the choice in context rather than guessing a type up front.
  */
 export const onboarding = new Hono<AppEnv>();
 onboarding.use("/onboarding/*", requireAuth);
 
+const STEPS = [
+  { path: "/onboarding", label: "Welcome" },
+  { path: "/onboarding/profile", label: "Personal details" },
+  { path: "/onboarding/business", label: "Business or later" },
+  { path: "/onboarding/complete", label: "Complete" },
+] as const;
+
 // ---------------------------------------------------------------------------
-// Type catalogue offered in step 1. A focused, reliable starter set: the most
-// common static/dynamic types plus one rich hosted page (link-in-bio).
+// Shared chrome
 // ---------------------------------------------------------------------------
 
-interface TypeChoice {
-  type: QrType;
-  icon: IconName;
-  label: string;
-  blurb: string;
+/** Which step is the user on? Drives the stepper's current/done state. */
+function stepIndex(path: string): number {
+  const idx = STEPS.findIndex((s) => s.path === path);
+  return idx === -1 ? 0 : idx;
 }
-
-const CHOICES: TypeChoice[] = [
-  { type: "url", icon: "url", label: "Website link", blurb: "Send a scan straight to any page — and change where it points later." },
-  { type: "text", icon: "text", label: "Plain text", blurb: "Share a short message, code, or note." },
-  { type: "wifi", icon: "wifi", label: "Wi-Fi", blurb: "Let guests join your network with one tap." },
-  { type: "vcard", icon: "vcard", label: "Contact card", blurb: "Hand over your details — saved straight to their phone." },
-  { type: "social", icon: "social", label: "Link in bio", blurb: "One page, all your links. Edit it anytime." },
-];
-
-// Per-type content fields rendered in step 2. Kept lightweight for a first run.
-interface FieldSpec {
-  name: string;
-  label: string;
-  placeholder: string;
-  type?: "text" | "url" | "tel" | "email";
-  required?: boolean;
-}
-
-const FIELDS: Record<string, FieldSpec[]> = {
-  url: [{ name: "url", label: "Website URL", placeholder: "yourbrand.com", type: "url", required: true }],
-  text: [{ name: "text", label: "Text", placeholder: "Anything you want to share", required: true }],
-  wifi: [
-    { name: "ssid", label: "Network name", placeholder: "MyCafe-Guest", required: true },
-    { name: "password", label: "Password", placeholder: "••••••••" },
-  ],
-  vcard: [
-    { name: "firstName", label: "First name", placeholder: "Ada", required: true },
-    { name: "lastName", label: "Last name", placeholder: "Lovelace" },
-    { name: "phone", label: "Phone", placeholder: "+1 555 0100", type: "tel" },
-    { name: "email", label: "Email", placeholder: "ada@example.com", type: "email" },
-  ],
-  social: [
-    { name: "name", label: "Display name", placeholder: "Your name or brand", required: true },
-    { name: "link1", label: "First link", placeholder: "https://instagram.com/you", type: "url" },
-    { name: "link2", label: "Second link", placeholder: "https://your-site.com", type: "url" },
-  ],
-};
-
-const RICH_KINDS: ReadonlySet<QrType> = new Set<QrType>(["pdf", "menu", "business", "appstore", "social"]);
-
-/** Brand-safe default design — dark modules on white (literal hex is the export asset). */
-const DEFAULT_DESIGN: QrDesign = {
-  fg: "#0D0D0F",
-  bg: "#FFFFFF",
-  moduleShape: "square",
-  eyeStyle: "square",
-  ecc: "M",
-  margin: 4,
-};
-
-// ---------------------------------------------------------------------------
-// View
-// ---------------------------------------------------------------------------
 
 const Stepper: FC<{ current: number }> = ({ current }) => (
-  <ol class="ob-stepper" aria-label="Onboarding progress">
-    {[
-      { n: 1, label: "Pick a type" },
-      { n: 2, label: "Add content" },
-      { n: 3, label: "Make it permanent" },
-    ].map((s) => (
-      <li
-        class={
-          "ob-step" + (s.n === current ? " ob-step-current" : s.n < current ? " ob-step-done" : "")
-        }
-        aria-current={s.n === current ? "step" : undefined}
-      >
-        <span class="ob-step-dot" aria-hidden="true">
-          {s.n < current ? <Icon name="check" size={14} /> : s.n}
-        </span>
-        <span class="ob-step-label t-body-sm">{s.label}</span>
-      </li>
-    ))}
+  <ol class="ob-stepper" aria-label="Setup progress">
+    {STEPS.map((s, i) => {
+      const n = i + 1;
+      return (
+        <li
+          class={
+            "ob-step" +
+            (n === current ? " ob-step-current" : n < current ? " ob-step-done" : "")
+          }
+          aria-current={n === current ? "step" : undefined}
+        >
+          <span class="ob-step-dot" aria-hidden="true">
+            {n < current ? <Icon name="check" size={14} /> : n}
+          </span>
+          <span class="ob-step-label t-body-sm">{s.label}</span>
+        </li>
+      );
+    })}
   </ol>
 );
 
-const TypeCard: FC<{ choice: TypeChoice }> = ({ choice }) => (
-  <button type="button" class="ob-type" data-ob-type={choice.type}>
-    <span class="ob-type-icon" aria-hidden="true">
-      <Icon name={choice.icon} size={22} />
-    </span>
-    <span class="ob-type-body">
-      <span class="ob-type-label t-body">{choice.label}</span>
-      <span class="ob-type-blurb t-body-sm text-secondary">{choice.blurb}</span>
-    </span>
-  </button>
+interface ShellProps {
+  user: Parameters<typeof AppShell>[0]["user"];
+  step: number;
+  businesses?: BusinessSummary[];
+  notice?: string;
+}
+
+/** Every step: the same shell, the same stepper, the same skip escape hatch. */
+const Step: FC<PropsWithChildren<ShellProps>> = ({
+  user,
+  step,
+  businesses,
+  notice,
+  children,
+}) => (
+  <AppShell
+    user={user}
+    title="Get started"
+    active="new"
+    businesses={businesses}
+    notice={notice}
+    formIsland
+  >
+    <div class="ob">
+      <Stepper current={step} />
+      {children}
+    </div>
+  </AppShell>
 );
 
-const FieldRow: FC<{ choiceType: QrType; spec: FieldSpec }> = ({ choiceType, spec }) => {
-  const id = `ob-${choiceType}-${spec.name}`;
-  return (
-    <div class="field" data-ob-field-for={choiceType}>
-      <label class="field-label" for={id}>
-        {spec.label}
-        {spec.required ? (
-          <span class="field-required" aria-hidden="true">
-            {" *"}
-          </span>
-        ) : null}
-      </label>
-      <input
-        class="input"
-        id={id}
-        type={spec.type ?? "text"}
-        placeholder={spec.placeholder}
-        data-ob-input={spec.name}
-        autocomplete="off"
-      />
-    </div>
-  );
-};
+/**
+ * "Skip for now" — completes setup without applying this step.
+ *
+ * A POST button, not a link. The previous version was `<a href="/onboarding/skip">`,
+ * and marking a user as onboarded is a state change — which a GET should never
+ * make. SameSite=Lax permits cross-site top-level GETs, so a hostile page could
+ * silently complete (and thereby bypass) someone's onboarding.
+ */
+const SkipLink: FC<{ label?: string }> = ({ label = "Skip for now" }) => (
+  <form method="post" action="/onboarding/skip" class="ob-skip-form">
+    <button type="submit" class="ob-skip t-body-sm text-secondary">
+      {label}
+    </button>
+  </form>
+);
+
+// ---------------------------------------------------------------------------
+// Step 1 — Welcome
+// ---------------------------------------------------------------------------
 
 onboarding.get("/onboarding", (c) => {
   const user = c.get("user")!;
-
-  // A blank-but-valid placeholder QR so step 3 has something to show before the
-  // live preview replaces it.
-  const placeholderSvg = renderSvg(
-    encodeMatrix("https://getsqanny.com", DEFAULT_DESIGN.ecc),
-    DEFAULT_DESIGN,
-  );
-
   return c.html(
-    <AppShell user={user} title="Get started" active="new">
-      <div class="ob" data-onboarding>
+    <Step user={user} step={1} notice={c.req.query("notice") ?? undefined}>
+      <section class="ob-panel">
         <header class="ob-head">
-          <h1 class="ob-title t-display-lg">Let’s make your first QR.</h1>
+          <h1 class="ob-title t-display-lg">Let’s set up your account.</h1>
           <p class="ob-lede t-body-lg text-secondary">
-            Three calm steps. We’ll have a code you can rely on in under a minute.
+            Three short questions, and you can stop after any of them. Everything
+            here can be changed later.
           </p>
         </header>
 
-        <Stepper current={1} />
+        <ul class="ob-promises">
+          <li>
+            <span class="ob-promise-glyph" aria-hidden="true">
+              <Icon name="business" size={18} />
+            </span>
+            <span>
+              <strong class="t-body">Add a profile</strong>
+              <span class="t-body-sm text-secondary">
+                {" "}
+                — a name and photo, so your account is recognisably yours.
+              </span>
+            </span>
+          </li>
+          <li>
+            <span class="ob-promise-glyph" aria-hidden="true">
+              <Icon name="qr" size={18} />
+            </span>
+            <span>
+              <strong class="t-body">Group codes by business</strong>
+              <span class="t-body-sm text-secondary">
+                {" "}
+                — keep each location's QRs and scan history separate.
+              </span>
+            </span>
+          </li>
+          <li>
+            <span class="ob-promise-glyph" aria-hidden="true">
+              <Icon name="check" size={18} />
+            </span>
+            <span>
+              <strong class="t-body">Then make your first QR</strong>
+              <span class="t-body-sm text-secondary">{" "}
+                — the dashboard takes it from there.
+              </span>
+            </span>
+          </li>
+        </ul>
 
-        <form
-          method="post"
-          action="/onboarding/complete"
-          class="ob-form"
-          data-ob-form
-        >
-          <input type="hidden" name="type" value="" data-ob-type-input />
-          <input type="hidden" name="fields_json" value="{}" data-ob-fields-input />
-
-          {/* ---------------------------------------------- Step 1: type */}
-          <section class="ob-panel" data-ob-panel="1">
-            <h2 class="ob-panel-title t-heading-sm">What should your QR do?</h2>
-            <div class="ob-types">
-              {CHOICES.map((choice) => (
-                <TypeCard choice={choice} />
-              ))}
-            </div>
-          </section>
-
-          {/* ------------------------------------------- Step 2: content */}
-          <section class="ob-panel" data-ob-panel="2" hidden>
-            <div class="ob-grid">
-              <div class="ob-grid-form">
-                <h2 class="ob-panel-title t-heading-sm" data-ob-content-title>
-                  Add your content
-                </h2>
-                <div class="ob-fields stack">
-                  {CHOICES.map((choice) =>
-                    (FIELDS[choice.type] ?? []).map((spec) => (
-                      <FieldRow choiceType={choice.type} spec={spec} />
-                    )),
-                  )}
-                </div>
-                <p class="ob-hint t-body-sm text-secondary">
-                  The preview updates as you type. You can fine-tune the design later in the studio.
-                </p>
-              </div>
-              <div class="ob-grid-preview">
-                <QrPreview svg={placeholderSvg} label="Live preview of your QR code" />
-                <p class="ob-preview-note t-caption text-tertiary" data-ob-preview-note>
-                  Start typing to see it come alive.
-                </p>
-              </div>
-            </div>
-          </section>
-
-          {/* ------------------------------------------- Step 3: confirm */}
-          <section class="ob-panel" data-ob-panel="3" hidden>
-            <div class="ob-grid">
-              <div class="ob-grid-form">
-                <h2 class="ob-panel-title t-heading-sm">Ready when you are.</h2>
-                <p class="ob-body t-body text-secondary">
-                  Your code is set. Because it’s dynamic when it can be, you can change where it
-                  points — without ever reprinting it. That’s the whole idea: a QR that never breaks.
-                </p>
-                <dl class="ob-summary">
-                  <div class="ob-summary-row">
-                    <dt class="t-body-sm text-secondary">Type</dt>
-                    <dd class="t-body" data-ob-summary-type>
-                      —
-                    </dd>
-                  </div>
-                  <div class="ob-summary-row">
-                    <dt class="t-body-sm text-secondary">Title</dt>
-                    <dd class="t-body" data-ob-summary-title>
-                      My first QR
-                    </dd>
-                  </div>
-                </dl>
-                <div class="field">
-                  <label class="field-label" for="ob-title">
-                    Give it a name
-                  </label>
-                  <input
-                    class="input"
-                    id="ob-title"
-                    name="title"
-                    type="text"
-                    value="My first QR"
-                    data-ob-title-input
-                    autocomplete="off"
-                  />
-                </div>
-              </div>
-              <div class="ob-grid-preview">
-                <QrPreview svg={placeholderSvg} label="Your finished QR code" />
-              </div>
-            </div>
-          </section>
-
-          {/* ------------------------------------------------ Nav footer */}
-          <footer class="ob-nav">
-            <a class="ob-skip t-body-sm text-secondary" href="/onboarding/skip">
-              Skip for now
-            </a>
-            <div class="ob-nav-btns">
-              <Button type="button" variant="ghost" class="ob-back" data-ob-back>
-                Back
-              </Button>
-              <Button type="button" variant="primary" class="ob-next" data-ob-next disabled>
-                Continue
-              </Button>
-              <Button
-                type="submit"
-                variant="primary"
-                class="ob-submit"
-                iconLeft={<Icon name="check" size={18} />}
-                data-ob-submit
-              >
-                Make it permanent
-              </Button>
-            </div>
-          </footer>
-        </form>
-      </div>
-
-      <script dangerouslySetInnerHTML={{ __html: ONBOARDING_ISLAND }} />
-    </AppShell>,
+        <footer class="ob-nav">
+          <SkipLink />
+          <div class="ob-nav-btns">
+            <Button href="/onboarding/profile" iconLeft={<Icon name="plus" size={18} />}>
+              Get started
+            </Button>
+          </div>
+        </footer>
+      </section>
+    </Step>,
   );
 });
 
 // ---------------------------------------------------------------------------
-// POST /onboarding/complete — create the first QR, mark onboarded, redirect.
+// Step 2 — Personal details
 // ---------------------------------------------------------------------------
 
-/** Coerce a parsed fields object into a string->string map. */
-function toFields(input: unknown): QrFields {
-  if (!input || typeof input !== "object") return {};
-  const out: QrFields = {};
-  for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
-    if (typeof v === "string") out[k] = v;
-    else if (v != null) out[k] = String(v);
-  }
-  return out;
+interface DetailsErrors {
+  name?: string;
+  phone?: string;
+  avatar_key?: string;
 }
 
-/** Build the social link-in-bio page data from the lightweight onboarding fields. */
-function buildSocialData(fields: QrFields): { name: string; links: { label: string; url: string }[] } {
-  const links: { label: string; url: string }[] = [];
-  for (const key of ["link1", "link2", "link3"]) {
-    const url = (fields[key] ?? "").trim();
-    if (url) links.push({ label: hostLabel(url), url });
-  }
-  return { name: (fields.name ?? "").trim() || "My links", links };
+interface DetailsValues {
+  name: string;
+  phone: string;
+  avatar_key: string | null;
 }
 
-/** A friendly label for a URL (its hostname, sans www). */
-function hostLabel(url: string): string {
-  try {
-    const u = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(url) ? url : `https://${url}`);
-    return u.hostname.replace(/^www\./, "");
-  } catch {
-    return url;
+const DetailsForm: FC<{
+  values: DetailsValues;
+  errors: DetailsErrors;
+  submitLabel: string;
+}> = ({ values, errors, submitLabel }) => (
+  <form
+    class="profileform ob-form"
+    method="post"
+    action="/onboarding/profile"
+    enctype="multipart/form-data"
+    data-dirty-guard
+    data-guard-submit
+  >
+    <ImagePicker
+      uid="ob"
+      name="avatar_key"
+      label="Profile photo"
+      src={values.avatar_key}
+      displayName={values.name}
+      scope="avatar"
+      error={errors.avatar_key}
+    />
+
+    <div class="form-grid">
+      <Input
+        id="ob-name"
+        name="name"
+        label="Your name"
+        placeholder="Alex Rivera"
+        value={values.name}
+        error={errors.name}
+        required
+        maxlength={LIMITS.name}
+        data-validate="name"
+        autocomplete="name"
+      />
+      <Input
+        id="ob-phone"
+        name="phone"
+        label="Phone"
+        type="tel"
+        placeholder="+1 555 0100"
+        value={values.phone}
+        error={errors.phone}
+        maxlength={LIMITS.phone}
+        inputmode="tel"
+        data-validate="phone"
+        autocomplete="tel"
+      />
+    </div>
+
+    <p class="ob-hint t-body-sm text-secondary">
+      Your email is already set — it's what you signed in with. Only your name
+      and phone are asked for here.
+    </p>
+
+    <div class="form-actions">
+      <Button type="submit" size="lg" data-busy-label="Saving…">
+        {submitLabel}
+      </Button>
+      <Button href="/onboarding/business" variant="secondary" size="lg">
+        Skip
+      </Button>
+    </div>
+  </form>
+);
+
+const DetailsPage: FC<{
+  user: Parameters<typeof AppShell>[0]["user"];
+  values: DetailsValues;
+  errors: DetailsErrors;
+  submitLabel: string;
+  notice?: string;
+}> = ({ user, values, errors, submitLabel, notice }) => (
+  <Step user={user} step={2} notice={notice}>
+    <section class="ob-panel">
+      <header class="ob-head">
+        <h1 class="ob-panel-title t-heading-sm">What should we call you?</h1>
+        <p class="ob-lede t-body text-secondary">
+          Used on your account and on the pages of businesses you manage.
+        </p>
+      </header>
+
+      <DetailsForm values={values} errors={errors} submitLabel={submitLabel} />
+    </section>
+  </Step>
+);
+
+/** Read the multipart profile form into the values to save, writing nothing. */
+async function parseDetails(
+  body: Record<string, unknown>,
+  env: Bindings,
+  userId: string,
+): Promise<{ values: DetailsValues; errors: DetailsErrors }> {
+  const errors: DetailsErrors = {};
+  const str = (k: string): string => {
+    const v = body[k];
+    return typeof v === "string" ? v : "";
+  };
+
+  const name = cleanText(str("name"), LIMITS.name);
+  const nameError = validateName(name, { required: true, label: "Name", max: LIMITS.name });
+  if (nameError) errors.name = nameError;
+
+  const phone = cleanText(str("phone"), LIMITS.phone);
+  const phoneError = validatePhone(phone);
+  if (phoneError) errors.phone = phoneError;
+
+  const submittedKey = str("avatar_key").trim();
+  let avatarKey: string | null = null;
+  if (submittedKey) {
+    if (ownsKey(submittedKey, userId, "avatar")) avatarKey = submittedKey;
+    else errors.avatar_key = "That image could not be used. Try another.";
   }
-}
-
-onboarding.post("/onboarding/complete", async (c) => {
-  const user = c.get("user")!;
-  const now = Date.now();
-
-  const form = await c.req.parseBody();
-  const type = (typeof form.type === "string" ? form.type : "url") as QrType;
-  const title =
-    (typeof form.title === "string" && form.title.trim()) || "My first QR";
-
-  let fields: QrFields = {};
-  if (typeof form.fields_json === "string") {
-    try {
-      fields = toFields(JSON.parse(form.fields_json) as unknown);
-    } catch {
-      fields = {};
+  if (!avatarKey) {
+    const file = body.avatar_key_file;
+    if (file && typeof file !== "string" && typeof (file as BlobLike).arrayBuffer === "function") {
+      const blob = file as BlobLike;
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      const stored = await storeImage(env, userId, "avatar", bytes, blob.type || "");
+      if (stored.ok) avatarKey = stored.key;
+      else errors.avatar_key = stored.error;
+    } else {
+      // No file and no key: either there was nothing to remove, or the user
+      // pressed Remove. A no-JS form on an existing photo posts the key back, so
+      // there is no third case, and falling back to `current` would silently
+      // undo the removal.
+      avatarKey = null;
     }
   }
 
-  const design = safePalette({ ...DEFAULT_DESIGN });
-  const appUrl = c.env.APP_URL.replace(/\/+$/, "");
+  return { values: { name, phone, avatar_key: avatarKey }, errors };
+}
 
-  let qrId: string;
+interface BlobLike {
+  type: string;
+  arrayBuffer(): Promise<ArrayBuffer>;
+}
 
-  try {
-  if (RICH_KINDS.has(type)) {
-    // Rich hosted page: always dynamic. The printed QR encodes /r/<code> which
-    // 302s to /p/<code>; destination is the hosted landing.
-    const shortCode = await ensureUniqueShortCode(c.env.DB);
-    const destination = `${appUrl}/p/${shortCode}`;
-    const kind = type as DynamicPageKind;
+onboarding.get("/onboarding/profile", async (c) => {
+  const user = c.get("user")!;
+  return c.html(
+    <DetailsPage
+      user={user}
+      values={{ name: user.name ?? "", phone: user.phone ?? "", avatar_key: user.avatar_key }}
+      errors={{}}
+      submitLabel="Continue"
+      notice={c.req.query("notice") ?? undefined}
+    />,
+  );
+});
 
-    // For the onboarding starter set the only rich kind is "social".
-    const data = kind === "social" ? buildSocialData(fields) : fields;
+onboarding.post("/onboarding/profile", async (c) => {
+  const user = c.get("user")!;
+  const body = await c.req.parseBody();
+  const current: DetailsValues = {
+    name: user.name ?? "",
+    phone: user.phone ?? "",
+    avatar_key: user.avatar_key,
+  };
+  const { values, errors } = await parseDetails(body, c.env, user.id);
 
-    const qr = await createQr(c.env.DB, {
-      user_id: user.id,
-      type,
-      title,
-      is_dynamic: true,
-      short_code: shortCode,
-      destination,
-      content_json: JSON.stringify(data),
-      design_json: JSON.stringify(design),
-      created_at: now,
-      updated_at: now,
-    });
-    qrId = qr.id;
-
-    await upsertDynamicPage(c.env.DB, {
-      qr_id: qr.id,
-      kind,
-      data_json: JSON.stringify(data),
-    });
-  } else if (type === "url") {
-    // URL → dynamic by default (the reliability promise: change the target,
-    // never the code). The printed QR encodes /r/<code>; destination is the
-    // user's real target.
-    const rawTarget = (fields.url ?? "").trim() || "https://getsqanny.com";
-    const destination = /^[a-z][a-z0-9+.-]*:\/\//i.test(rawTarget)
-      ? rawTarget
-      : `https://${rawTarget}`;
-    const shortCode = await ensureUniqueShortCode(c.env.DB);
-
-    const qr = await createQr(c.env.DB, {
-      user_id: user.id,
-      type,
-      title,
-      is_dynamic: true,
-      short_code: shortCode,
-      destination,
-      content_json: JSON.stringify(fields),
-      design_json: JSON.stringify(design),
-      created_at: now,
-      updated_at: now,
-    });
-    qrId = qr.id;
-  } else {
-    // Static types (text, wifi, vcard, …) — the image encodes the payload
-    // directly; no short_code.
-    const qr = await createQr(c.env.DB, {
-      user_id: user.id,
-      type,
-      title,
-      is_dynamic: false,
-      content_json: JSON.stringify(fields),
-      design_json: JSON.stringify(design),
-      created_at: now,
-      updated_at: now,
-    });
-    qrId = qr.id;
+  if (Object.keys(errors).length) {
+    return c.html(
+      <DetailsPage
+        user={user}
+        values={values}
+        errors={errors}
+        submitLabel="Continue"
+      />,
+      422,
+    );
   }
 
-  await setOnboarded(c.env.DB, user.id, now);
+  try {
+    await updateUserProfile(c.env.DB, user.id, {
+      name: values.name,
+      phone: orNull(values.phone),
+      avatar_key: values.avatar_key,
+    });
   } catch (err) {
-    console.error(err);
+    console.error("[onboarding] profile save failed:", err);
     return c.html(
-      <AppShell user={user} title="Get started" active="new">
-        <div class="ob" data-onboarding>
-          <header class="ob-head">
-            <h1 class="ob-title t-display-lg">Something went wrong.</h1>
-            <p class="ob-lede t-body-lg text-secondary">
-              We couldn't create your QR — please try again.
-            </p>
-          </header>
-          <div class="ob-nav">
-            <Button href="/onboarding" variant="primary">
-              Back to start
-            </Button>
-          </div>
-        </div>
-      </AppShell>,
+      <DetailsPage
+        user={user}
+        values={current}
+        errors={{ name: "Couldn't save your details. Please try again." }}
+        submitLabel="Continue"
+      />,
       500,
     );
   }
-  return c.redirect(`/app/${qrId}`, 302);
+
+  return c.redirect("/onboarding/business", 302);
 });
 
 // ---------------------------------------------------------------------------
-// GET /onboarding/skip — mark onboarded and go to the dashboard.
+// Step 3 — A business, or later
 // ---------------------------------------------------------------------------
 
-onboarding.get("/onboarding/skip", async (c) => {
+/**
+ * Reuses BusinessForm verbatim rather than a reduced variant, so what someone
+ * enters here is exactly what they'd get from /app/businesses/new — one form, one
+ * set of rules, and the six required fields are the same six.
+ */
+const BusinessPage: FC<{
+  user: Parameters<typeof AppShell>[0]["user"];
+  values: Parameters<typeof BusinessForm>[0]["values"];
+  errors: Parameters<typeof BusinessForm>[0]["errors"];
+  businesses: BusinessSummary[];
+  submitLabel: string;
+  notice?: string;
+}> = ({ user, values, errors, businesses, submitLabel, notice }) => (
+  <Step user={user} step={3} businesses={businesses} notice={notice}>
+    <section class="ob-panel">
+        <header class="ob-head">
+          <h1 class="ob-panel-title t-heading-sm">Add a business, or come back later.</h1>
+          <p class="ob-lede t-body text-secondary">
+            A business keeps each location&apos;s QRs, contact details and scan
+            history separate. Everything except the essentials is optional, and
+            you can change any of this later.
+          </p>
+        </header>
+
+      <BusinessForm
+        action="/onboarding/business"
+        uid="ob-biz"
+        values={values}
+        errors={errors}
+        submitLabel={submitLabel}
+        busyLabel="Creating…"
+        footer={
+          // A first-class skip, not a footnote: someone here to make a QR should
+          // not be blocked by a form they didn't ask for.
+          //
+          // `formaction` rather than a nested <form>: BusinessForm already wraps
+          // its footer in a <form>, and a form inside a form is invalid markup
+          // that browsers silently drop. Overriding the submission target is
+          // native HTML5, so this still works with scripting disabled.
+          <button
+            type="submit"
+            class="btn btn-ghost btn-lg"
+            formaction="/onboarding/complete"
+            formmethod="post"
+          >
+            <span class="btn-label">I&apos;ll do this later</span>
+          </button>
+        }
+      />
+    </section>
+  </Step>
+);
+
+onboarding.get("/onboarding/business", async (c) => {
   const user = c.get("user")!;
-  await setOnboarded(c.env.DB, user.id, Date.now());
+  const businesses = await listBusinessesForUser(c.env.DB, user.id);
+  return c.html(
+    <BusinessPage
+      user={user}
+      values={{ category: "cafe" }}
+      errors={{}}
+      businesses={businesses}
+      submitLabel="Create Business"
+      notice={c.req.query("notice") ?? undefined}
+    />,
+  );
+});
+
+onboarding.post("/onboarding/business", async (c) => {
+  const user = c.get("user")!;
+  const body = await c.req.parseBody();
+  const parsed = await parseBusiness(body, c.env, user.id);
+  const businesses = await listBusinessesForUser(c.env.DB, user.id);
+
+  if (Object.keys(parsed.errors).length) {
+    return c.html(
+      <BusinessPage
+        user={user}
+        values={echoValues(body)}
+        errors={parsed.errors}
+        businesses={businesses}
+        submitLabel="Create Business"
+      />,
+      422,
+    );
+  }
+
+  try {
+    await createBusiness(c.env.DB, user.id, parsed.patch);
+  } catch (err) {
+    console.error("[onboarding] business create failed:", err);
+    return c.redirect(withFlash("/onboarding/business", "business-save-failed"), 302);
+  }
+
+  // The business they just made is the one they are here to set up, so it
+  // becomes the active scope rather than leaving them on "All businesses".
+  if ((await countBusinessesForUser(c.env.DB, user.id)) === 1) {
+    const [first] = await listBusinessesForUser(c.env.DB, user.id, { status: "active" });
+    if (first) await setCurrentBusiness(c.env.DB, user.id, first.id);
+  }
+
+  return c.redirect("/onboarding/complete", 302);
+});
+
+// ---------------------------------------------------------------------------
+// Step 4 — Ready
+// ---------------------------------------------------------------------------
+
+onboarding.get("/onboarding/complete", async (c) => {
+  const user = c.get("user")!;
+  // Read fresh: the name and avatar were just written by step 2, and a business
+  // may have just been created in step 3.
+  const fresh = (await getUserById(c.env.DB, user.id)) ?? user;
+  const businesses = await listBusinessesForUser(c.env.DB, fresh.id, { status: "active" });
+  const displayName = (fresh.name ?? "").trim() || fresh.email;
+
+  return c.html(
+    <Step user={fresh} step={4} businesses={businesses} notice={c.req.query("notice") ?? undefined}>
+      <section class="ob-panel">
+        <header class="ob-head">
+          <span class="ob-done-glyph" aria-hidden="true">
+            <Icon name="check" size={28} />
+          </span>
+          <h1 class="ob-title t-display-lg">You&apos;re set, {displayName}.</h1>
+          <p class="ob-lede t-body-lg text-secondary">
+            {businesses.length
+              ? "Your account is ready. Here’s what you’ve set up."
+              : "Your account is ready. You can add a business whenever you like."}
+          </p>
+        </header>
+
+        <ul class="ob-recap">
+          <li class="ob-recap-row">
+            <span class="ob-recap-glyph" aria-hidden="true">
+              <Icon name="business" size={18} />
+            </span>
+            <span class="ob-recap-body">
+              <span class="ob-recap-label t-body-sm text-secondary">Profile</span>
+              <span class="ob-recap-value t-body">
+                {(fresh.name ?? "").trim() ? fresh.name : "Not set yet"}
+              </span>
+            </span>
+            <a class="ob-recap-link t-body-sm" href="/app/profile">
+              Edit
+            </a>
+          </li>
+
+          <li class="ob-recap-row">
+            <span class="ob-recap-glyph" aria-hidden="true">
+              <Icon name="qr" size={18} />
+            </span>
+            <span class="ob-recap-body">
+              <span class="ob-recap-label t-body-sm text-secondary">Business</span>
+              {businesses.length ? (
+                <span class="ob-recap-value t-body">
+                  <Avatar size="sm" name={businesses[0].name} src={businesses[0].logo_key} />{" "}
+                  {businesses[0].name}
+                  <span class="text-secondary"> · {businessLocation(businesses[0])}</span>
+                </span>
+              ) : (
+                <span class="ob-recap-value t-body text-secondary">None yet</span>
+              )}
+            </span>
+            <a class="ob-recap-link t-body-sm" href="/app/businesses">
+              {businesses.length ? "Manage" : "Add"}
+            </a>
+          </li>
+        </ul>
+
+        {/* No "skip" here: this is the last step, so finishing and skipping are
+            the same action. One control, no false choice. */}
+        <footer class="ob-nav">
+          <div class="ob-nav-btns">
+            <form method="post" action="/onboarding/complete">
+              <Button type="submit" size="lg" data-busy-label="Finishing…">
+                Go to dashboard
+              </Button>
+            </form>
+          </div>
+        </footer>
+      </section>
+    </Step>,
+  );
+});
+
+/**
+ * Finish setup. Deliberately creates no QR: the dashboard's empty state owns
+ * that decision, and it can explain the trade-off (dynamic vs static) in a
+ * context where the user has room to read it. Landing there with zero QRs is
+ * the expected outcome of a fresh account, not a broken state.
+ */
+onboarding.post("/onboarding/complete", async (c) => {
+  const user = c.get("user")!;
+  try {
+    await setOnboarded(c.env.DB, user.id, Date.now());
+  } catch (err) {
+    console.error("[onboarding] complete failed:", err);
+    return c.redirect("/onboarding", 302);
+  }
+  return c.redirect(withFlash("/app", "onboarding-complete"), 302);
+});
+
+// ---------------------------------------------------------------------------
+// POST /onboarding/skip — mark onboarded and go to the dashboard.
+// ---------------------------------------------------------------------------
+
+/**
+ * A POST, because marking onboarding finished is a state change and a GET must
+ * never make one. The GET below exists only so a bookmarked or already-open link
+ * still resolves — it shows the confirmation rather than acting on it.
+ */
+onboarding.post("/onboarding/skip", async (c) => {
+  const user = c.get("user")!;
+  try {
+    await setOnboarded(c.env.DB, user.id, Date.now());
+  } catch (err) {
+    console.error("[onboarding] skip failed:", err);
+  }
   return c.redirect("/app", 302);
 });
 
-// ---------------------------------------------------------------------------
-// Self-contained onboarding island (no build step). Drives step navigation,
-// live preview via /api/preview, and serializes the chosen fields into the
-// hidden form inputs before submit.
-// ---------------------------------------------------------------------------
-
-const ONBOARDING_ISLAND = `(function(){
-  var root=document.querySelector('[data-onboarding]');
-  if(!root)return;
-  var form=root.querySelector('[data-ob-form]');
-  var typeInput=root.querySelector('[data-ob-type-input]');
-  var fieldsInput=root.querySelector('[data-ob-fields-input]');
-  var titleInput=root.querySelector('[data-ob-title-input]');
-  var panels=Array.prototype.slice.call(root.querySelectorAll('[data-ob-panel]'));
-  var steps=Array.prototype.slice.call(root.querySelectorAll('.ob-step'));
-  var backBtn=root.querySelector('[data-ob-back]');
-  var nextBtn=root.querySelector('[data-ob-next]');
-  var submitBtn=root.querySelector('[data-ob-submit]');
-  var previewNote=root.querySelector('[data-ob-preview-note]');
-  var summaryType=root.querySelector('[data-ob-summary-type]');
-  var summaryTitle=root.querySelector('[data-ob-summary-title]');
-  var previewSurfaces=Array.prototype.slice.call(root.querySelectorAll('.qr-preview-surface'));
-  var current=1, chosen='';
-  var labels={url:'Website link',text:'Plain text',wifi:'Wi-Fi',vcard:'Contact card',social:'Link in bio'};
-  var requiredField={url:'url',text:'text',wifi:'ssid',vcard:'firstName',social:'name'};
-  var richKinds={social:1};
-
-  function showPanel(n){
-    current=n;
-    panels.forEach(function(p){p.hidden=(p.getAttribute('data-ob-panel')!=String(n));});
-    steps.forEach(function(s,i){
-      s.classList.remove('ob-step-current','ob-step-done');
-      var sn=i+1;
-      if(sn===n)s.classList.add('ob-step-current');
-      else if(sn<n)s.classList.add('ob-step-done');
-      if(sn===n)s.setAttribute('aria-current','step');else s.removeAttribute('aria-current');
-    });
-    backBtn.style.display=(n>1)?'':'none';
-    nextBtn.style.display=(n<3)?'':'none';
-    submitBtn.style.display=(n===3)?'':'none';
-    if(n===3){
-      if(summaryType)summaryType.textContent=labels[chosen]||chosen;
-      if(summaryTitle)summaryTitle.textContent=(titleInput&&titleInput.value)||'My first QR';
-      refreshPreview();
-    }
-    validate();
-    var first=panels[n-1]&&panels[n-1].querySelector('input,button');
-    if(first&&n!==1)try{first.focus();}catch(e){}
-  }
-
-  function activeFields(){
-    var out={};
-    root.querySelectorAll('[data-ob-field-for="'+chosen+'"] [data-ob-input]').forEach(function(inp){
-      out[inp.getAttribute('data-ob-input')]=inp.value;
-    });
-    return out;
-  }
-
-  function fieldVisibility(){
-    root.querySelectorAll('[data-ob-field-for]').forEach(function(f){
-      f.style.display=(f.getAttribute('data-ob-field-for')===chosen)?'':'none';
-    });
-  }
-
-  function validate(){
-    if(current===1){nextBtn.disabled=!chosen;return;}
-    if(current===2){
-      var req=requiredField[chosen];
-      var f=activeFields();
-      nextBtn.disabled=!(req&&f[req]&&f[req].trim());
-      return;
-    }
-    nextBtn.disabled=false;
-  }
-
-  function previewType(){
-    // Rich/dynamic kinds preview as a URL pointing at their future hosted page.
-    return richKinds[chosen]?'url':chosen;
-  }
-  function previewFields(){
-    if(richKinds[chosen]){
-      var f=activeFields();
-      return {url:(f.link1||f.link2||'https://getsqanny.com')};
-    }
-    return activeFields();
-  }
-
-  var previewTimer=null;
-  function refreshPreview(){
-    if(!chosen)return;
-    if(previewTimer)clearTimeout(previewTimer);
-    previewTimer=setTimeout(function(){
-      fetch('/api/preview',{method:'POST',headers:{'content-type':'application/json'},
-        body:JSON.stringify({type:previewType(),fields:previewFields()})})
-        .then(function(r){return r.ok?r.json():null;})
-        .then(function(d){
-          if(d&&d.svg){previewSurfaces.forEach(function(s){s.innerHTML=d.svg;});
-            if(previewNote)previewNote.textContent='Looking good — this is your code.';}
-        }).catch(function(){});
-    },180);
-  }
-
-  root.querySelectorAll('[data-ob-type]').forEach(function(card){
-    card.addEventListener('click',function(){
-      chosen=card.getAttribute('data-ob-type');
-      root.querySelectorAll('[data-ob-type]').forEach(function(c){c.classList.remove('ob-type-selected');});
-      card.classList.add('ob-type-selected');
-      typeInput.value=chosen;
-      fieldVisibility();
-      validate();
-      showPanel(2);
-    });
-  });
-
-  root.querySelectorAll('[data-ob-field-for] [data-ob-input]').forEach(function(inp){
-    inp.addEventListener('input',function(){validate();refreshPreview();});
-  });
-  if(titleInput)titleInput.addEventListener('input',function(){
-    if(summaryTitle)summaryTitle.textContent=titleInput.value||'My first QR';
-  });
-
-  nextBtn.addEventListener('click',function(){if(!nextBtn.disabled)showPanel(current+1);});
-  backBtn.addEventListener('click',function(){showPanel(Math.max(1,current-1));});
-
-  form.addEventListener('submit',function(){
-    typeInput.value=chosen;
-    fieldsInput.value=JSON.stringify(activeFields());
-    submitBtn.disabled=true;
-  });
-
-  fieldVisibility();
-  showPanel(1);
-})();`;
+onboarding.get("/onboarding/skip", async (c) => {
+  const user = c.get("user")!;
+  return c.html(
+    <Step user={user} step={1}>
+      <section class="ob-panel">
+        <header class="ob-head">
+          <h1 class="ob-title t-display-lg">Skip the rest of setup?</h1>
+          <p class="ob-lede t-body text-secondary">
+            This finishes setup without adding a business. You can add one
+            whenever you like, and nothing you&rsquo;ve already entered is lost.
+          </p>
+        </header>
+        <footer class="ob-nav">
+          <div class="ob-nav-btns">
+            <form method="post" action="/onboarding/skip">
+              <Button type="submit" size="lg" data-busy-label="Finishing…">
+                Yes, skip for now
+              </Button>
+            </form>
+            <Button href="/onboarding" variant="secondary" size="lg">
+              Keep setting up
+            </Button>
+          </div>
+        </footer>
+      </section>
+    </Step>,
+  );
+});

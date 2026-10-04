@@ -4,13 +4,13 @@ import type { AppEnv } from "../middleware/auth";
 import { requireAuth } from "../middleware/auth";
 import { AppShell } from "../ui/app-shell";
 import { Button } from "../ui/components/button";
+import { EmptyStateButton } from "../ui/components/empty-state";
 import { Card } from "../ui/components/card";
 import { Badge } from "../ui/components/badge";
 import { Icon } from "../ui/icons";
 import type { IconName } from "../ui/icons";
-import { listQrByUser, listFolders } from "../db/queries";
-import type { QrRow, FolderRow } from "../db/queries";
-import { getTotals } from "../lib/analytics";
+import { listQrByUserScoped, listBusinessesForUser, listFolders, getBusinessForUser, countUnassignedQrByUser, countDynamicByUser, type QrListRow, type FolderRow } from "../db/queries";
+import { countScansForQrs } from "../lib/analytics";
 import type { QrType } from "../types";
 
 export const dashboard = new Hono<AppEnv>();
@@ -42,8 +42,22 @@ function formatDate(ts: number): string {
   });
 }
 
-interface QrWithScans extends QrRow {
+interface QrWithScans extends QrListRow {
   scans: number;
+}
+
+/**
+ * Where a QR is managed.
+ *
+ * ONE rule, one function. A physical Sqanny Stand is managed at
+ * `/qrs/<registryId>` — it has a permanent serial, an archive lifecycle and a
+ * business scope that the studio knows nothing about. A studio code is managed in
+ * the studio. Deciding this per call site is what previously gave a single stand
+ * two different "Edit" buttons pointing at two different editors, with no way to
+ * tell which one was authoritative.
+ */
+export function manageHref(qr: { id: string; registry_id?: string | null }): string {
+  return qr.registry_id ? `/qrs/${qr.registry_id}` : `/app/${qr.id}`;
 }
 
 /** One QR in the list — a Card with title, badges, scan total, date, actions. */
@@ -56,7 +70,9 @@ const QrListItem: FC<{ qr: QrWithScans }> = ({ qr }) => {
   // ambiguity is how an owner ends up setting the destination on the wrong
   // QR, or scanning one and wondering why it never changed.
   const unclaimed = dynamic && !qr.destination;
+  const isStand = Boolean(qr.registry_id);
   const code = qr.short_code ?? "";
+  const href = manageHref(qr);
   const search = `${qr.title} ${typeLabel} ${code}`.toLowerCase();
 
   return (
@@ -80,6 +96,10 @@ const QrListItem: FC<{ qr: QrWithScans }> = ({ qr }) => {
             ) : (
               <Badge tone="neutral">Static</Badge>
             )}
+            {/* A stand is not just another dynamic code: it is a physical asset
+                with a permanent serial, and it has its own screen. Labelling it
+                is what stops someone hunting through the studio for it. */}
+            {isStand ? <Badge tone="accent">Sqanny Stand</Badge> : null}
             {unclaimed ? <Badge tone="warning" dot>No destination yet</Badge> : null}
           </div>
         </div>
@@ -94,14 +114,20 @@ const QrListItem: FC<{ qr: QrWithScans }> = ({ qr }) => {
         <div class="qr-item-meta">
           {/* The short code identifies the printed label. Two codes can easily
               share a title, and the code is the only thing that tells you which
-              one you are holding. */}
+              one you are holding. A stand is identified by its SERIAL instead,
+              which is the code actually printed on it. */}
+          {isStand && qr.registry_id ? (
+            <a class="qr-item-code t-caption" href={href}>
+              View stand
+            </a>
+          ) : null}
           {code ? <span class="qr-item-code t-caption">{code}</span> : null}
           <span class="t-caption text-tertiary">{formatDate(qr.created_at)}</span>
         </div>
 
         <div class="qr-item-actions">
           <Button
-            href={`/app/${qr.id}`}
+            href={href}
             variant="ghost"
             class="qr-item-action"
             aria-label={`View ${qr.title}`}
@@ -110,7 +136,7 @@ const QrListItem: FC<{ qr: QrWithScans }> = ({ qr }) => {
             View
           </Button>
           <Button
-            href={`/app/${qr.id}/edit`}
+            href={href}
             variant="secondary"
             class="qr-item-action"
             aria-label={`Edit ${qr.title}`}
@@ -147,23 +173,49 @@ const SEARCH_FILTER = `(function(){
 dashboard.get("/app", async (c) => {
   const user = c.get("user")!;
 
-  let qrs: QrRow[];
+  // The scope is whatever the switcher set, but it is re-verified here. A stale
+  // or hand-edited `current_business_id` — a business since archived, or a row
+  // that somehow points elsewhere — must degrade to the wide view rather than
+  // render another tenant's names and counts. The status check matters as much
+  // as the membership check: archiving a business is a statement that it is no
+  // longer a context to work in, and the switcher only ever offers active ones.
+  const requestedScope = user.current_business_id;
+  const requested = requestedScope
+    ? await getBusinessForUser(c.env.DB, requestedScope, user.id)
+    : null;
+  const scope = requested?.status === "active" ? requestedScope : null;
+
+  let qrs: QrListRow[];
   let folders: FolderRow[];
   let withScans: QrWithScans[];
+  const businesses = await listBusinessesForUser(c.env.DB, user.id);
   try {
     [qrs, folders] = await Promise.all([
-      listQrByUser(c.env.DB, user.id),
+      listQrByUserScoped(c.env.DB, user.id, scope),
       listFolders(c.env.DB, user.id),
     ]);
 
-    // Live scan totals from the KV fast counters, in parallel.
-    withScans = await Promise.all(
-      qrs.map(async (qr) => ({ ...qr, scans: await getTotals(c.env, qr.id) })),
-    );
+    // Scan totals in ONE grouped query, not one KV read per code.
+    //
+    // The per-code `getTotals` fan-out cost a network round trip for every row,
+    // so the dashboard's latency grew with the size of the account — the exact
+    // shape that punishes the paying customer. One aggregate, keyed in memory.
+    //
+    // D1 is the source of truth here for the same reason it is on /qrs: mixing
+    // the eventually-consistent KV counter with the D1 counts used elsewhere is
+    // what made the same QR show two different totals on two screens.
+    const totals = await countScansForQrs(c.env.DB, qrs.map((q) => q.id));
+    withScans = qrs.map((qr) => ({ ...qr, scans: totals.get(qr.id) ?? 0 }));
   } catch (err) {
     console.error(err);
     return c.html(
-      <AppShell user={user} title="Dashboard" active="dashboard">
+      <AppShell
+        user={user}
+        title="Dashboard"
+        active="dashboard"
+        businesses={businesses}
+        notice={c.req.query("notice")}
+      >
         <div class="dash-empty">
           <h2 class="dash-empty-title t-heading-sm">Couldn't load your codes</h2>
           <p class="dash-empty-text t-body text-secondary">
@@ -200,38 +252,104 @@ dashboard.get("/app", async (c) => {
   }
 
   const isEmpty = withScans.length === 0;
+  const scopedBusiness = scope
+    ? businesses.find((b) => b.id === scope) ?? null
+    : null;
+  const businessCount = businesses.filter((b) => b.status === "active").length;
+
+  // An empty *scoped* view is a different situation from an empty account, and
+  // it needs different copy: the account may be full of codes, they're just not
+  // this business's. Saying "No QR codes yet" there would be a lie.
+  const elsewhere = scope
+    ? await countUnassignedQrByUser(c.env.DB, user.id) > 0 ||
+      businesses.some((b) => b.id !== scope && b.status === "active")
+    : false;
 
   return c.html(
-    <AppShell user={user} title="Dashboard" active="dashboard">
+    <AppShell
+      user={{ ...user, current_business_id: scope }}
+      title={scopedBusiness ? `${scopedBusiness.name}` : "Dashboard"}
+      active="dashboard"
+      businesses={businesses}
+      notice={c.req.query("notice")}
+    >
       <header class="dash-header">
         <div class="dash-heading">
-          <h1 class="t-display-md">Your QR codes</h1>
+          <h1 class="t-display-md">
+            {scopedBusiness ? scopedBusiness.name : "Your QR codes"}
+          </h1>
           <p class="dash-sub t-body text-secondary">
             {isEmpty
-              ? "Reliable codes that never break — start your first one."
+              ? scopedBusiness
+                ? "This business has no codes yet."
+                : "Reliable codes that never break — start your first one."
               : `${withScans.length} code${withScans.length === 1 ? "" : "s"} working for you.`}
           </p>
         </div>
         {!isEmpty ? (
-          <Button href="/app/new" iconLeft={<Icon name="plus" />}>
-            New QR
-          </Button>
+          <div class="dash-header-actions">
+            {/* Claiming an already-printed stand is a peer of "new QR", not a
+                sub-feature of it: the code exists, the user just needs to
+                connect it. Offered on every dashboard, including the empty one
+                below, because a stand can arrive before its first digital code. */}
+            <Button href="/qrs/claim" iconLeft={<Icon name="qr" size={16} />}>
+              Claim a printed stand
+            </Button>
+            <Button href="/app/new" iconLeft={<Icon name="plus" />}>
+              New QR
+            </Button>
+          </div>
         ) : null}
       </header>
 
       {isEmpty ? (
         <div class="dash-empty">
           <span class="dash-empty-glyph" aria-hidden="true">
-            <Icon name="qr" size={40} />
+            <Icon name={scopedBusiness ? "business" : "qr"} size={40} />
           </span>
-          <h2 class="dash-empty-title t-heading-sm">No QR codes yet</h2>
+          <h2 class="dash-empty-title t-heading-sm">
+            {scopedBusiness
+              ? `No codes for ${scopedBusiness.name} yet`
+              : "No QR codes yet"}
+          </h2>
           <p class="dash-empty-text t-body text-secondary">
-            Create a code once, point it anywhere, and update the destination
-            forever — the printed QR never changes.
+            {scopedBusiness
+              ? "Codes connected to this business will show up here, with their scan counts."
+              : "Create a code once, point it anywhere, and update the destination forever — the printed QR never changes."}
           </p>
-          <Button href="/app/new" size="lg" iconLeft={<Icon name="plus" />}>
-            Create your first QR
-          </Button>
+          <div class="dash-empty-actions">
+            {scopedBusiness && elsewhere ? (
+              <form method="post" action="/app/businesses/switch">
+                <input type="hidden" name="business_id" value="" />
+                <input type="hidden" name="next" value="/app" />
+                <button class="btn btn-secondary btn-lg" type="submit">
+                  <span class="btn-label">View all businesses</span>
+                </button>
+              </form>
+            ) : null}
+            {/* A business is never a prerequisite for a QR. Offering it here as
+                a lower-emphasis sibling keeps the fast path — print a code —
+                one click away, and matches the onboarding's "business or later". */}
+            <Button href="/app/new" size="lg" iconLeft={<Icon name="plus" />}>
+              Create your first QR
+            </Button>
+            <Button
+              href="/qrs/claim"
+              size="lg"
+              variant="secondary"
+              iconLeft={<Icon name="qr" size={16} />}
+            >
+              Connect a printed stand
+            </Button>
+            {!scopedBusiness && businessCount === 0 ? (
+              <EmptyStateButton
+                href="/app/businesses/new"
+                label="Add a business"
+                icon="business"
+                variant="secondary"
+              />
+            ) : null}
+          </div>
         </div>
       ) : (
         <>

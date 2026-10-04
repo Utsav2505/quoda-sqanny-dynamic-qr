@@ -44,25 +44,63 @@ function init(): void {
  * The printed URL is the thing an owner needs when they are holding a physical
  * label and wondering which dashboard entry it belongs to. Copying it beats
  * transcribing it, so wire it up without requiring a library.
+ *
+ * Three details this gets right that the obvious version does not:
+ *  1. Only the LABEL is swapped (`span.btn-label`), never `textContent`. These
+ *     buttons carry an icon; `textContent = "Copied"` would delete the icon and
+ *     the button would stay wrong for the rest of the session.
+ *  2. If the clipboard is unavailable the user is told how to recover, and the
+ *     text is SELECTED for them. Saying "Press Cmd-C" while nothing is selected
+ *     copies nothing — the failure mode is the exact one the hint is for.
+ *  3. Re-clicking restarts the revert timer instead of stacking one, so three
+ *     quick taps do not flash "Copied" and blank out after a single 2s.
  */
 function wireCopy(root: HTMLElement): void {
   const btn = root.querySelector<HTMLElement>("[data-copy]");
   if (!btn) return;
-  const original = btn.textContent ?? "";
+  const label = btn.querySelector<HTMLElement>(".btn-label") ?? btn;
+  const original = label.textContent ?? "";
+  const revertAfter = 2000;
+  // cmd on Apple hardware, ctrl everywhere else — "Press Cmd-C" on Windows is
+  // advice that cannot work.
+  const accel = /mac|iphone|ipad|ipod/i.test(navigator.platform || navigator.userAgent)
+    ? "Cmd"
+    : "Ctrl";
+  let revertTimer = 0;
+
+  const say = (text: string, ms: number): void => {
+    label.textContent = text;
+    window.clearTimeout(revertTimer);
+    revertTimer = window.setTimeout(() => {
+      label.textContent = original;
+    }, ms);
+  };
 
   btn.addEventListener("click", async () => {
     const value = btn.getAttribute("data-copy") ?? "";
+
+    // Select the source text up front. If the write below throws, the user can
+    // recover with the accelerator; if it succeeds, the selection is invisible.
+    const sourceSel = btn.getAttribute("data-copy-source");
+    const source = sourceSel ? root.querySelector<HTMLElement>(sourceSel) : null;
+    if (source) {
+      const range = document.createRange();
+      range.selectNodeContents(source);
+      const sel = window.getSelection();
+      if (sel) {
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    }
+
     try {
       await navigator.clipboard.writeText(value);
-      btn.textContent = "Copied";
+      say("Copied", revertAfter);
     } catch {
-      // Clipboard can be blocked (insecure context, denied permission). Say so
-      // rather than silently doing nothing.
-      btn.textContent = "Press ⌘C";
+      // Blocked by an insecure context or a denied permission. Not fatal, and not
+      // worth a modal: say what to press and leave the selection in place.
+      say(`Press ${accel}+C`, 4000);
     }
-    window.setTimeout(() => {
-      btn.textContent = original;
-    }, 2000);
   });
 }
 
@@ -119,22 +157,76 @@ function wireDestinationEdit(qrId: string, root: HTMLElement): void {
 
 // --- Delete ---------------------------------------------------------------
 
+/**
+ * Delete, behind a real in-app confirmation.
+ *
+ * This was `confirm()` + `alert()`. Three problems, all of them the kind a user
+ * only notices when it goes wrong:
+ *  - `alert()`/`confirm()` are unstyled, block the whole main thread, and iOS
+ *    Safari has a long-standing double-tap bug in `confirm`. The app already has
+ *    a Modal component with a focus trap and Escape handling, so use it.
+ *  - There was no in-flight state, so a second tap re-armed the request. The
+ *    confirm button now disables and relabels itself for the round trip.
+ *  - A failed delete reported the reason in a modal the user had to dismiss,
+ *    then left the page looking unchanged. It now says what went wrong in place
+ *    and leaves the dialog open so the retry is one click away.
+ */
 function wireDelete(qrId: string, root: HTMLElement): void {
-  const btn = root.querySelector<HTMLElement>("[data-delete]")?.closest(".btn");
-  if (!btn) return;
-  btn.addEventListener("click", async () => {
-    if (!confirm("Delete this QR code? This can't be undone, and any printed codes will stop working.")) return;
+  const trigger = root.querySelector<HTMLElement>("[data-delete]");
+  // The dialog is a SIBLING of `.qr-detail` (one per page, unique id), so it is
+  // deliberately looked up on the document — a `root.querySelector` here would
+  // silently return null and the Delete button would do nothing at all.
+  const dialog = document.querySelector<HTMLElement>('[data-modal][id="qr-delete"]');
+  const confirmBtn = dialog?.querySelector<HTMLElement>("[data-delete-confirm]");
+  if (!trigger || !dialog || !confirmBtn) return;
+
+  const status = dialog.querySelector<HTMLElement>("[data-delete-status]");
+  const label = confirmBtn.querySelector<HTMLElement>(".btn-label") ?? confirmBtn;
+  const idle = label.textContent ?? "Delete QR code";
+  const toast = (window as unknown as {
+    sqannyToast?: (m: string, t: "success" | "danger" | "neutral", title?: string) => void;
+  }).sqannyToast;
+
+  const setBusy = (busy: boolean): void => {
+    if (confirmBtn instanceof HTMLButtonElement) confirmBtn.disabled = busy;
+    confirmBtn.setAttribute("aria-busy", busy ? "true" : "false");
+    label.textContent = busy
+      ? confirmBtn.getAttribute("data-busy-label") || "Deleting…"
+      : idle;
+  };
+
+  const fail = (message: string): void => {
+    setBusy(false);
+    if (status) status.textContent = message;
+    toast?.(message, "danger", "Couldn't delete");
+  };
+
+  confirmBtn.addEventListener("click", async () => {
+    if (confirmBtn instanceof HTMLButtonElement && confirmBtn.disabled) return;
+    setBusy(true);
+    if (status) status.textContent = "";
+
+    let body: { ok: boolean; error?: string };
     try {
-      const res = await fetch(`/api/qr/${qrId}`, { method: "DELETE" });
-      const data = (await res.json()) as { ok: boolean; error?: string };
-      if (data.ok) {
-        location.href = "/app";
-      } else {
-        alert(data.error || "Couldn't delete this QR code.");
-      }
+      const res = await fetch(`/api/qr/${qrId}`, {
+        method: "DELETE",
+        headers: { accept: "application/json" },
+      });
+      body = (await res.json()) as { ok: boolean; error?: string };
     } catch {
-      alert("Couldn't delete. Check your connection and try again.");
+      // Offline, DNS failure, connection reset — the request may not have
+      // reached the server at all, so say that rather than implying it failed.
+      fail("Couldn't reach Sqanny. Check your connection and try again.");
+      return;
     }
+
+    if (body.ok) {
+      // The entry is gone; there is nothing left to show it on.
+      toast?.("The QR code was deleted.", "success");
+      location.href = "/app";
+      return;
+    }
+    fail(body.error || "Couldn't delete this QR code.");
   });
 }
 

@@ -24,6 +24,13 @@
   margin-top: var(--space-16);
 }
 
+.dash-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+}
+
 /* ================================================================= Button */
 
 .btn {
@@ -1384,6 +1391,34 @@
 .ob-skip:hover {
   color: var(--color-text-primary);
 }
+/* Skip is a POST button (signing a user out, or completing onboarding, must not
+   be reachable from a cross-site GET), and a <button> carries UA chrome the
+   surrounding text links do not. Reset it so it still reads as quiet text. */
+.ob-skip-form {
+  display: inline;
+}
+.ob-skip {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+/* Same for the account menu's log-out button, which replaced an <a>. */
+.acct-logout-form {
+  margin: 0;
+}
+.acct-links .dropdown-item {
+  width: 100%;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
 
 /* =========================================================== Styleguide aux */
 
@@ -2110,7 +2145,7 @@
 
 .auth-code,
 .auth-devnote code {
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: var(--fs-caption);
   background: var(--color-surface-3);
   color: var(--color-text-primary);
@@ -2179,6 +2214,12 @@
 /* QR list item (a Card variant) */
 .qr-item {
   padding: var(--space-16) var(--space-24);
+}
+
+/* The dashboard's QR list: Cards are block-level, so without this they butt
+   against each other with no separation at all. */
+.qr-item-wrap > * + * {
+  margin-top: var(--space-12);
 }
 
 .qr-item-row {
@@ -2916,7 +2957,7 @@
 /* Addresses, hashes and referers are monospaced so digits align down the
    column and a long value can be scanned vertically without losing your place. */
 .qr-scanlog-mono {
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: var(--fs-caption);
   color: var(--color-text-secondary);
 }
@@ -2973,7 +3014,7 @@
    codes sharing a title, so it is monospaced and sits above the date. */
 .qr-item-code {
   display: block;
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color: var(--color-text-secondary);
   letter-spacing: 0.02em;
 }
@@ -3034,4 +3075,1840 @@
   flex: 0 0 auto;
   margin-top: 2px;
   color: var(--color-text-secondary);
+}
+
+/* ===========================================================================
+   Account context + profile + businesses (token-only).
+
+   Four systems live here, in the order they stack down the page:
+     1. Page primitives (narrow column, header, breadcrumbs)
+     2. Dropdowns (the shared panel used by both the account menu and the
+        business switcher) + avatars, which appear inside them
+     3. Forms: sections, grids, the image picker, hours
+     4. The business list/detail/profile surfaces built on top
+
+   Every transition is wrapped in @media (prefers-reduced-motion: no-preference).
+   =========================================================================== */
+
+/* ---- 1. Page primitives --------------------------------------------------- */
+.page-narrow {
+  width: 100%;
+  max-width: 880px;
+  margin-inline: auto;
+}
+
+.page-head {
+  margin-bottom: var(--space-32);
+}
+.page-head-split {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-24);
+  flex-wrap: wrap;
+}
+.page-head-text {
+  min-width: 0;
+}
+.page-lede {
+  margin-top: var(--space-8);
+  max-width: 56ch;
+}
+
+/* An h1 after the breadcrumbs needs the space the crumbs would have had. */
+.page-head .breadcrumbs + .t-display-md {
+  margin-top: var(--space-8);
+}
+
+.breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  margin-bottom: var(--space-12);
+  min-width: 0;
+}
+.breadcrumb-link {
+  color: var(--color-text-secondary);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .breadcrumb-link {
+    transition: color var(--dur-micro-in) var(--ease-enter);
+  }
+}
+.breadcrumb-link:hover {
+  color: var(--color-text-primary);
+}
+.breadcrumb-sep {
+  color: var(--color-text-tertiary);
+}
+.breadcrumb-current {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- 2. Dropdown panel (shared by account menu + business switcher) -------- */
+/* The panel is positioned by the island: the trigger keeps `position: relative`
+   and the panel is absolutely placed under it. `hidden` is the no-JS state, so
+   [hidden] must win over the display value below or the panel would flash. */
+.dropdown-panel {
+  position: absolute;
+  z-index: 60;
+  top: calc(100% + var(--space-8));
+  inset-inline-end: 0;
+  min-width: 260px;
+  padding: var(--space-8);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  text-align: start;
+}
+.dropdown-panel[hidden] {
+  display: none;
+}
+/* The switcher sits at the start of the bar and opens downwards from there. */
+.biz-switch-panel {
+  inset-inline-end: auto;
+  inset-inline-start: 0;
+  min-width: 300px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .dropdown-panel {
+    animation: dropdown-in var(--dur-micro-in) var(--ease-enter);
+    transform-origin: top center;
+  }
+  @keyframes dropdown-in {
+    from {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.98);
+    }
+  }
+}
+
+.dropdown-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  width: 100%;
+  padding: var(--space-8) var(--space-12);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  min-height: 44px; /* touch target */
+}
+@media (prefers-reduced-motion: no-preference) {
+  .dropdown-item {
+    transition: background-color var(--dur-micro-in) var(--ease-enter);
+  }
+}
+.dropdown-item:hover {
+  background: var(--color-surface-2);
+}
+.dropdown-item-current {
+  background: var(--color-accent-subtle);
+}
+
+.dropdown-item-glyph,
+.biz-switch-all-glyph {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-tertiary);
+}
+.dropdown-item-current .dropdown-item-glyph {
+  color: var(--color-accent);
+}
+
+.dropdown-item-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dropdown-item-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dropdown-item-note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dropdown-item-check {
+  flex: 0 0 auto;
+  color: var(--color-accent);
+}
+
+/* Destructive rows use the same accent, inverted: the only real red in the app
+   is a logout, and it should not look like the primary action. */
+.dropdown-item-danger .dropdown-item-label {
+  color: var(--color-text-primary);
+  font-weight: var(--fw-ui-label);
+}
+.dropdown-item-danger:hover {
+  background: var(--color-surface-2);
+}
+.dropdown-item-danger .dropdown-item-glyph {
+  color: var(--color-text-primary);
+}
+
+.dropdown-sep {
+  height: 1px;
+  margin: var(--space-8) 0;
+  background: var(--color-border-subtle);
+}
+
+.dropdown-empty {
+  padding: var(--space-12);
+}
+
+/* ---- 2b. Avatars ----------------------------------------------------------- */
+.avatar {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: var(--color-surface-2);
+  color: var(--color-text-secondary);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-ui-label);
+  letter-spacing: 0.01em;
+  user-select: none;
+}
+.avatar-sm { width: 32px; height: 32px; font-size: 11px; }
+.avatar-md { width: 40px; height: 40px; }
+.avatar-lg { width: 64px; height: 64px; font-size: var(--fs-body-lg); }
+.avatar-xl { width: 96px; height: 96px; font-size: var(--fs-display-md); }
+
+.avatar-initials {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+
+.avatar-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* ---- 2c. Account menu ----------------------------------------------------- */
+.acct {
+  position: relative;
+}
+.acct-trigger,
+.biz-switch-trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-height: 44px; /* touch target */
+  padding: var(--space-4) var(--space-8);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-1);
+  color: var(--color-text-primary);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  max-width: 220px;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .acct-trigger,
+  .biz-switch-trigger {
+    transition:
+      background-color var(--dur-micro-in) var(--ease-enter),
+      border-color var(--dur-micro-in) var(--ease-enter);
+  }
+}
+.acct-trigger:hover,
+.biz-switch-trigger:hover {
+  background: var(--color-surface-2);
+  border-color: var(--color-text-tertiary);
+}
+.acct-trigger[aria-expanded="true"],
+.biz-switch-trigger[aria-expanded="true"] {
+  border-color: var(--color-accent);
+}
+
+.acct-trigger-text,
+.biz-switch-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.acct-trigger-name,
+.biz-switch-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--fw-ui-label);
+}
+.acct-trigger-sub,
+.biz-switch-eyebrow {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.acct-caret,
+.biz-switch-caret {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--color-text-tertiary);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .acct-caret,
+  .biz-switch-caret {
+    transition: transform var(--dur-micro-in) var(--ease-enter);
+  }
+  .acct-trigger[aria-expanded="true"] .acct-caret,
+  .biz-switch-trigger[aria-expanded="true"] .biz-switch-caret {
+    transform: rotate(180deg);
+  }
+}
+
+.acct-panel {
+  min-width: 280px;
+}
+
+.acct-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: var(--space-12);
+}
+.acct-head-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.acct-head-name,
+.acct-head-email {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.acct-links {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Narrow viewports: the trigger keeps the avatar only. The name is still in the
+   panel, and the aria-label always names the account, so nothing is lost. */
+@media (max-width: 860px) {
+  .acct-trigger-text {
+    display: none;
+  }
+  .acct-trigger {
+    padding: var(--space-4);
+  }
+}
+
+/* ---- 2d. Business context bar --------------------------------------------- */
+.context-bar {
+  position: sticky;
+  top: 64px; /* the nav is sticky at 64px; the bar stacks directly under it */
+  z-index: 40;
+  width: 100%;
+  background: color-mix(in srgb, var(--color-surface-0) 92%, transparent);
+  backdrop-filter: saturate(1.2) blur(12px);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+.context-bar-inner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-16);
+  width: 100%;
+  max-width: 1120px;
+  margin-inline: auto;
+  padding: var(--space-8) var(--space-24);
+}
+.biz-switch {
+  position: relative;
+  max-width: 100%;
+}
+.biz-switch-trigger {
+  max-width: 320px;
+}
+.biz-switch-all {
+  background: var(--color-accent-subtle);
+}
+.biz-switch-all:hover {
+  background: var(--color-accent-subtle);
+  filter: brightness(0.97);
+}
+
+/* ---- 3. Flash notice ------------------------------------------------------ */
+/* Server-rendered, so this must read as a confirmation without a dismiss click.
+   It sits at the top of the main column and scrolls away with the page. */
+.flash-region:not(:empty) {
+  margin-bottom: var(--space-24);
+}
+.flash {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-12);
+  padding: var(--space-16);
+  border: 1px solid var(--color-border);
+  border-inline-start: 3px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-1);
+  box-shadow: var(--shadow-sm);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .flash {
+    animation: flash-in var(--dur-reveal-in) var(--ease-enter);
+  }
+  @keyframes flash-in {
+    from {
+      opacity: 0;
+      transform: translateY(-6px);
+    }
+  }
+}
+.flash-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  margin-top: 1px;
+  color: var(--color-accent);
+}
+.flash-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.flash-title {
+  font-weight: var(--fw-ui-label);
+}
+.flash-message {
+  color: var(--color-text-secondary);
+}
+.flash-dismiss {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+.flash-dismiss:hover {
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+}
+
+/* A failed save is stated, not styled as a scolding: same language, the
+   inverse emphasis. */
+.flash-danger {
+  border-inline-start-color: var(--color-text-primary);
+}
+.flash-danger .flash-icon {
+  color: var(--color-text-primary);
+}
+
+/* ---- 4. Inline notice (persistent, not dismissible) ----------------------- */
+.notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-16);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-24);
+  padding: var(--space-16);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-1);
+}
+.notice-text {
+  min-width: 0;
+  flex: 1 1 320px;
+}
+.notice-warning {
+  border-inline-start: 3px solid var(--color-text-primary);
+  background: var(--color-surface-2);
+}
+
+/* ---- 5. Forms ------------------------------------------------------------- */
+.form-section {
+  padding-block: var(--space-24);
+  border-top: 1px solid var(--color-border-subtle);
+}
+.form-section:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+.form-section-head {
+  margin-bottom: var(--space-16);
+}
+.form-section-title {
+  margin: 0;
+}
+.form-section-note {
+  margin-top: var(--space-4);
+  max-width: 56ch;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-16);
+}
+.form-grid-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+@media (max-width: 720px) {
+  .form-grid-3 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.form-conditional[hidden] {
+  display: none;
+}
+.form-conditional {
+  grid-column: 1 / -1;
+}
+
+.form-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  flex-wrap: wrap;
+  padding-top: var(--space-24);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.profileform-note {
+  margin-top: var(--space-16);
+  padding: var(--space-12) var(--space-16);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-2);
+}
+
+.btn-sm {
+  min-height: 36px;
+  padding: var(--space-4) var(--space-12);
+  font-size: var(--fs-body-sm);
+}
+
+/* ---- 5b. Image picker ----------------------------------------------------- */
+.picker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-24);
+  flex-wrap: wrap;
+}
+.picker-stage {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 96px;
+  height: 96px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-2);
+  color: var(--color-text-tertiary);
+  font-size: var(--fs-display-md);
+  font-weight: var(--fw-display-md);
+  letter-spacing: -0.02em;
+  user-select: none;
+}
+.picker-stage-has-image {
+  border-style: solid;
+}
+.picker-preview-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.picker-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+/* The real file input is the accessible control; the label above is the
+   picture. Not `display: none` — a hidden input can't be focused, and the
+   remove/upload buttons are useless without a way to pick a file. */
+.picker-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+.picker-input:focus-visible + .picker-status,
+.picker-file:focus-within {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
+.picker-status {
+  flex: 1 1 100%;
+  min-height: 1.2em;
+  color: var(--color-text-tertiary);
+}
+.picker-status-ok {
+  color: var(--color-text-secondary);
+}
+.picker-status-err {
+  color: var(--color-text-primary);
+  font-weight: var(--fw-ui-label);
+}
+.picker-status-busy {
+  color: var(--color-text-secondary);
+}
+.picker-busy {
+  opacity: 0.6;
+  pointer-events: none;
+}
+.picker .field-error {
+  flex: 1 1 100%;
+}
+
+/* ---- 5c. Business hours --------------------------------------------------- */
+.hours {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.hours-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-16);
+  flex-wrap: wrap;
+  padding: var(--space-8) var(--space-12);
+  border-radius: var(--radius-md);
+  min-height: 44px; /* touch target */
+}
+.hours-row:nth-child(odd) {
+  background: var(--color-surface-1);
+}
+/* The island adds .hours-closed to the row, and dims the times it is holding
+   in place, rather than disabling them: a disabled input is not submitted, so a
+   closed day would lose the times it had stored. */
+.hours-closed .hours-time {
+  opacity: 0.45;
+}
+.hours-day {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  cursor: pointer;
+  min-width: 120px;
+}
+.hours-toggle {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--color-accent);
+  cursor: pointer;
+}
+.hours-times {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.hours-time {
+  width: 120px;
+}
+.hours-dash {
+  color: var(--color-text-tertiary);
+}
+.input-muted {
+  color: var(--color-text-tertiary);
+}
+@media (max-width: 560px) {
+  .hours-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .hours-times {
+    padding-inline-start: var(--space-24);
+  }
+}
+
+/* ---- 6. Business list + detail ------------------------------------------- */
+.biz-section + .biz-section {
+  margin-top: var(--space-32);
+}
+.biz-section-title {
+  margin: 0 0 var(--space-12);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.biz-section-empty {
+  padding: var(--space-24);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-lg);
+  text-align: center;
+}
+
+.biz-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+.biz-list .card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-16);
+  flex-wrap: wrap;
+  padding: var(--space-16);
+}
+.biz-row-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  min-width: 0;
+  flex: 1 1 320px;
+}
+.biz-row-body {
+  min-width: 0;
+}
+.biz-row-titleline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  flex-wrap: wrap;
+}
+.biz-row-title {
+  margin: 0;
+  font-weight: var(--fw-ui-label);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.biz-row-meta {
+  margin-top: 2px;
+}
+.biz-row-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  flex: 0 0 auto;
+}
+/* An archived business stays legible but recedes: it is history, not context. */
+.biz-row-archived {
+  background: var(--color-surface-0);
+  box-shadow: none;
+}
+.biz-row-archived .biz-row-title {
+  color: var(--color-text-secondary);
+  font-weight: var(--fw-body);
+}
+
+.biz-hero {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-16);
+  flex-wrap: wrap;
+  margin-top: var(--space-16);
+}
+.biz-hero-text {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.biz-hero-text h1 {
+  overflow-wrap: anywhere;
+}
+.biz-hero-meta {
+  margin-top: var(--space-4);
+}
+.biz-hero-badges {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  flex-wrap: wrap;
+  margin-top: var(--space-12);
+}
+.biz-hero-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  flex: 0 0 auto;
+}
+
+.biz-facts-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-16);
+}
+.biz-qr-row .qr-item-glyph {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+}
+
+/* ---- 6b. Danger zone (archive, never delete) ----------------------------- */
+.danger-zone {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-24);
+  flex-wrap: wrap;
+  margin-top: var(--space-48);
+  padding: var(--space-24);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-1);
+}
+.danger-zone-text {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+.danger-zone-title {
+  margin: 0;
+}
+.danger-zone-note {
+  margin-top: var(--space-8);
+  max-width: 56ch;
+}
+
+/* ---- 7. Profile ----------------------------------------------------------- */
+.profile-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: var(--space-24);
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .profile-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.profile-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  min-width: 0;
+}
+
+.progress-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-8);
+}
+.progress-value {
+  color: var(--color-text-secondary);
+  font-weight: var(--fw-ui-label);
+}
+.progress-track {
+  position: relative;
+  height: 8px;
+  margin-top: var(--space-8);
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: var(--color-surface-2);
+}
+.progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-accent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .progress-fill {
+    transition: width var(--dur-layout) var(--ease-enter);
+  }
+}
+
+.progress-list {
+  list-style: none;
+  padding: 0;
+  margin: var(--space-16) 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.progress-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  color: var(--color-text-secondary);
+}
+.progress-item-mark {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  color: var(--color-text-tertiary);
+}
+.progress-item-done {
+  color: var(--color-text-primary);
+}
+.progress-item-done .progress-item-mark {
+  border-color: var(--color-accent);
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+}
+
+.profile-score-done {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.profile-score-done svg {
+  color: var(--color-accent);
+}
+
+.profile-biz-empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  margin-bottom: var(--space-16);
+}
+.profile-biz-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 var(--space-16);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.profile-biz-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-8);
+  border-radius: var(--radius-md);
+  min-height: 44px; /* touch target */
+}
+@media (prefers-reduced-motion: no-preference) {
+  .profile-biz-item {
+    transition: background-color var(--dur-micro-in) var(--ease-enter);
+  }
+}
+.profile-biz-item:hover {
+  background: var(--color-surface-2);
+}
+.profile-biz-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.profile-biz-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--fw-ui-label);
+}
+/* The account card's meta lines (email, business count) sit one step below the
+   value they belong to; without an explicit colour they inherit the value's
+   weight and the card reads as one undifferentiated block. */
+.profile-biz-meta,
+.acct-head-meta {
+  color: var(--color-text-tertiary);
+}
+/* `.profile-main` is the form column of the two-column grid. It needs a min-width
+   of 0 or a long business name inside it can force the grid track wider than the
+   viewport and cause a horizontal scroll on a phone. */
+.profile-main {
+  min-width: 0;
+}
+.profileform .form-actions {
+  margin-top: var(--space-24);
+}
+
+/* ---- 8. Empty state ------------------------------------------------------- */
+/* The panel, not the centred text block the QR pages already use: this one can
+   carry actions, so it stays left-aligned and reads as a panel. */
+.empty-state-panel {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-16);
+  padding: var(--space-24);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-1);
+}
+.empty-state-inline {
+  border-style: dashed;
+  background: transparent;
+}
+.empty-state-glyph {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-md);
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+}
+.empty-state-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.empty-state-title {
+  margin: 0;
+}
+.empty-state-text {
+  max-width: 52ch;
+}
+.empty-state-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  flex-wrap: wrap;
+  margin-top: var(--space-8);
+}
+@media (max-width: 560px) {
+  .empty-state-panel {
+    flex-direction: column;
+  }
+}
+
+/* ---- 9. Studio: business assignment -------------------------------------- */
+.studio-biz-field {
+  margin-top: var(--space-16);
+}
+.studio-biz-help {
+  margin-top: var(--space-4);
+}
+.studio-biz-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-top: var(--space-8);
+  color: var(--color-accent);
+  font-weight: var(--fw-ui-label);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .studio-biz-link {
+    transition: color var(--dur-micro-in) var(--ease-enter);
+  }
+}
+.studio-biz-link:hover {
+  color: var(--color-accent-hover);
+}
+
+/* ---- 10. Dashboard empty-state actions ----------------------------------- */
+.dash-empty-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-12);
+  flex-wrap: wrap;
+  margin-top: var(--space-8);
+}
+
+/* ---- 11. Studio save/export rows (pre-existing, unstyled until now) ------ */
+.studio-save {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  flex-wrap: wrap;
+  margin-top: var(--space-16);
+}
+.studio-export-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  flex-wrap: wrap;
+  margin-top: var(--space-24);
+  padding-top: var(--space-24);
+  border-top: 1px solid var(--color-border-subtle);
+}
+.studio-check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-8);
+  cursor: pointer;
+}
+.studio-check-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  accent-color: var(--color-accent);
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+.studio-check-row > span {
+  min-width: 0;
+}
+.studio-toggle-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-12);
+  flex-wrap: wrap;
+  padding: var(--space-12) var(--space-16);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-1);
+}
+.studio-toggle-help {
+  display: block;
+  margin-top: 2px;
+  max-width: 56ch;
+}
+.studio-deferred {
+  margin-top: var(--space-16);
+}
+
+/* ===========================================================================
+   Onboarding: four URL-driven steps.
+
+   The existing .ob-* shell (stepper, panels, nav) predates this flow and is
+   reused as-is. What follows is only what the progressive flow adds. The layout
+   rule throughout is that nothing here depends on JavaScript: no step hides
+   another, so a scripting-blocked visitor sees the same four screens.
+   =========================================================================== */
+
+.ob {
+  width: 100%;
+  max-width: 720px;
+  margin-inline: auto;
+}
+
+.ob-stepper {
+  display: flex;
+  align-items: center;
+  gap: var(--space-24);
+  flex-wrap: wrap;
+  list-style: none;
+  padding: 0;
+  margin: 0 0 var(--space-32);
+}
+.ob-step-label {
+  white-space: nowrap;
+}
+@media (max-width: 560px) {
+  .ob-stepper {
+    gap: var(--space-12);
+  }
+  .ob-step-label {
+    display: none;
+  }
+  .ob-stepper {
+    justify-content: space-between;
+  }
+  .ob-step-current .ob-step-label {
+    display: inline;
+  }
+}
+
+.ob-head {
+  margin-bottom: var(--space-24);
+}
+.ob-title {
+  margin: 0;
+}
+.ob-lede {
+  margin-top: var(--space-12);
+  max-width: 52ch;
+}
+
+/* Step 1: what the next two minutes are for. */
+.ob-promises {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+}
+.ob-promises li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-12);
+}
+.ob-promise-glyph {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+}
+
+/* Step 4: the "you're set" mark. */
+.ob-done-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  margin-bottom: var(--space-16);
+  border-radius: var(--radius-full);
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+}
+
+/* Step 4: what actually got set up, each row editable in place. */
+.ob-recap {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.ob-recap-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: var(--space-16);
+}
+.ob-recap-row + .ob-recap-row {
+  border-top: 1px solid var(--color-border-subtle);
+}
+.ob-recap-glyph {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--color-text-tertiary);
+}
+.ob-recap-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ob-recap-value {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  overflow-wrap: anywhere;
+}
+.ob-recap-link {
+  flex: 0 0 auto;
+  color: var(--color-accent);
+  font-weight: var(--fw-ui-label);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .ob-recap-link {
+    transition: color var(--dur-micro-in) var(--ease-enter);
+  }
+}
+.ob-recap-link:hover {
+  color: var(--color-accent-hover);
+}
+
+/* "I'll do this later" sits beside Save, so it needs to read as a peer action
+   in the actions row. It is a submit button with a `formaction` override rather
+   than its own <form>, which keeps it native (no JS) and keeps BusinessForm's
+   single form valid. */
+.ob-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-24);
+}
+.ob-form .form-actions {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.ob-hint {
+  margin: 0;
+}
+
+/* ================================================= QR claim wizard (4 steps) */
+/* Added with /qrs/claim*. Distinct from the older .claim-* rules above, which
+   belong to the public "set a destination" page and are centred on one column. */
+
+.claim-serial {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  margin-bottom: var(--space-16);
+}
+.claim-serial-label {
+  text-transform: uppercase;
+  letter-spacing: var(--ls-ui-label);
+}
+.claim-serial-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--fs-body);
+  color: var(--color-text-primary);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-8);
+  letter-spacing: 0.04em;
+}
+
+.claim-context {
+  margin-bottom: var(--space-16);
+  padding: var(--space-8) var(--space-12);
+  background: var(--color-surface-2);
+  border-radius: var(--radius-sm);
+}
+.claim-context a {
+  color: var(--color-accent-text);
+}
+
+/* --- camera viewport ------------------------------------------------------ */
+/* Sized in 4:3 so a phone camera has a predictable crop, and never collapsed:
+   a zero-height box makes the "start camera" button jump on the first click. */
+.claim-viewport {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  width: 100%;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-surface-2);
+}
+.claim-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* The video is decorative until the camera is actually running: without this it
+   shows as a black rectangle, which reads as "broken" rather than "not yet on". */
+.claim-video:not([src]) {
+  display: none;
+}
+.claim-viewport-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-8);
+  padding: var(--space-24);
+  text-align: center;
+}
+/* Once a stream is attached, the empty-state art would sit on top of the feed. */
+.claim-viewport[data-scanner-state="scanning"] .claim-viewport-empty,
+.claim-viewport[data-scanner-state="initializing"] .claim-viewport-empty,
+.claim-viewport[data-scanner-state="success"] .claim-viewport-empty {
+  background: color-mix(in srgb, var(--color-surface-0) 78%, transparent);
+}
+.claim-viewport-glyph {
+  color: var(--color-text-tertiary);
+}
+.claim-scan-title {
+  font-weight: var(--fw-ui-label);
+}
+.claim-scan-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+  margin: var(--space-16) 0;
+}
+.claim-manual {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+/* --- business radio list -------------------------------------------------- */
+.claim-fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0 0 var(--space-16);
+}
+.claim-legend {
+  margin-bottom: var(--space-8);
+}
+.claim-biz-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.claim-biz {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-12);
+  padding: var(--space-12) var(--space-16);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+/* Selection is driven off the native radio rather than a server-rendered or
+   script-set attribute, so picking a different business highlights at once and
+   a no-JS re-render still shows the restored choice. */
+.claim-biz:has(.claim-biz-input:checked) {
+  border-color: var(--color-accent);
+  background: var(--color-accent-subtle);
+}
+.claim-biz:has(.claim-biz-input:focus-visible) {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+.claim-biz-input {
+  margin-top: 2px;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  accent-color: var(--color-accent);
+}
+/* Whole-card target: a 20px radio alone is a poor touch target on a phone. */
+.claim-biz:hover {
+  border-color: var(--color-accent);
+}
+
+
+.claim-biz-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+.claim-biz-name {
+  color: var(--color-text-primary);
+  font-weight: var(--fw-ui-label);
+  overflow-wrap: anywhere;
+}
+/* The category · locality line under a business name in the picker. Without a
+   width cap a long locality can push the check glyph off the card on a phone. */
+.claim-biz-meta {
+  overflow-wrap: anywhere;
+}
+/* The check is a decorative duplicate of the radio's own state, so it is
+   absolutely placed: in the flex row it would compete with the label width. */
+.claim-biz-check {
+  margin-left: auto;
+  align-self: center;
+  color: var(--color-accent);
+}
+
+.claim-scan-hint {
+  max-width: 34ch;
+}
+
+/* --- wizard header + progress ------------------------------------------------
+ * The stepper answers "where am I?" on every one of the four steps. It was
+ * rendered with classes that had no rules at all, so "Step 2 of 4 · Select
+ * Business" appeared as unstyled body text above an invisible bar — the one
+ * question a multi-step flow exists to answer was the one it did not answer. */
+
+.claim-head {
+  margin-bottom: var(--space-24);
+}
+.claim-title {
+  margin-bottom: var(--space-8);
+}
+.claim-sub {
+  max-width: 60ch;
+}
+
+.claim-progress {
+  margin-bottom: var(--space-24);
+}
+.claim-progress-text {
+  margin-bottom: var(--space-8);
+}
+.claim-progress-step {
+  color: var(--color-text-primary);
+  font-weight: var(--fw-ui-label);
+}
+.claim-progress-track {
+  display: block;
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface-2);
+  overflow: hidden;
+}
+.claim-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-accent);
+}
+
+/* The optional aside beside the work (instructions next to the form). Only
+   rendered when a step passes one, but the split has to exist before it does. */
+.claim-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-24);
+}
+@media (min-width: 900px) {
+  .claim-split {
+    grid-template-columns: minmax(0, 1fr) 300px;
+    align-items: start;
+  }
+}
+.claim-split-aside {
+  min-width: 0;
+}
+.claim-split-main {
+  min-width: 0;
+}
+
+/* --- paired fields ---------------------------------------------------------
+ * Step 3 puts Category and Custom category side by side, and the stand editor
+ * puts the same pair side by side. One row, collapsing to one column on a
+ * narrow screen rather than squeezing two selects into ~160px each. */
+.field-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-16);
+}
+@media (min-width: 560px) {
+  .field-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.field-row > .field {
+  min-width: 0;
+}
+
+/* The required marker on a claim/step-3 label. Named `.field-req` there and
+   `.field-required` in the studio — two names for one thing, so only the studio
+   one had a rule and the claim form's asterisk rendered at body size. Aliased
+   rather than renamed so both callers are correct and there is one style. */
+.field-req,
+.field-required {
+  color: var(--color-accent);
+  margin-left: var(--space-2);
+}
+
+/* --- review recap --------------------------------------------------------- */
+
+.claim-review-lead {
+  margin-bottom: var(--space-16);
+}
+.claim-recap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  margin: 0 0 var(--space-24);
+  padding: var(--space-16);
+  background: var(--color-surface-2);
+  border-radius: var(--radius-md);
+}
+.claim-recap-row {
+  display: grid;
+  grid-template-columns: minmax(96px, 28%) 1fr;
+  gap: var(--space-12);
+  align-items: baseline;
+}
+.claim-recap-row dt {
+  margin: 0;
+}
+.claim-recap-row dd {
+  margin: 0;
+  color: var(--color-text-primary);
+  /* A long URL must not push the row wider than the card on a phone. */
+  overflow-wrap: anywhere;
+}
+.claim-recap-url {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--fs-body-sm);
+}
+
+/* --- success -------------------------------------------------------------- */
+.claim-success {
+  text-align: center;
+}
+.claim-success-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: var(--radius-full);
+  background: var(--color-success);
+  color: var(--color-surface-0);
+  margin-bottom: var(--space-16);
+}
+.claim-success-lead {
+  margin: var(--space-8) 0 var(--space-16);
+}
+.claim-success .form-actions {
+  justify-content: center;
+}
+
+@media (max-width: 560px) {
+  .claim-recap-row {
+    grid-template-columns: 1fr;
+    gap: var(--space-4);
+  }
+  .claim-success .form-actions .btn,
+  .claim-scan-actions .btn {
+    width: 100%;
+  }
+}
+
+/* ================================== Sqanny stand management (/qrs, /qrs/:id) */
+
+.qrs-crumbs a {
+  color: var(--color-accent-text);
+}
+
+.qrs-why {
+  max-width: 62ch;
+  margin-bottom: var(--space-16);
+}
+
+/* Sits above the stand's edit form when a save is rejected. One sentence that
+   answers "what happened, and what now" before the user starts scanning for the
+   red text — and, crucially, tells them the fields they did NOT get wrong are
+   still filled in, which is the reassurance the old bare error list lacked. */
+.qrs-form-error-summary {
+  margin-bottom: var(--space-16);
+  padding: var(--space-12) var(--space-16);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-2);
+  border-left: 3px solid var(--color-accent);
+  color: var(--color-text-secondary);
+}
+
+/* --- filter bar ----------------------------------------------------------- */
+.qrs-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-12);
+  margin-bottom: var(--space-24);
+  padding: var(--space-16);
+  background: var(--color-surface-2);
+  border-radius: var(--radius-md);
+}
+.qrs-filters .field {
+  margin: 0;
+  min-width: 180px;
+}
+/* Search gets the extra room: it is the one filter people type a long value
+   into, and truncating the value is worse than widening the control. */
+.qrs-filter-search {
+  flex: 1 1 260px;
+}
+.qrs-filter-actions {
+  display: flex;
+  gap: var(--space-8);
+}
+
+/* --- list ----------------------------------------------------------------- */
+.qrs-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.qrs-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  padding: var(--space-12) var(--space-16);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+}
+.qrs-row-main {
+  min-width: 0;
+}
+.qrs-row-name {
+  font-weight: var(--fw-ui-label);
+  color: var(--color-text-primary);
+  text-decoration: none;
+}
+.qrs-row-name:hover {
+  text-decoration: underline;
+}
+.qrs-row-meta {
+  margin: var(--space-4) 0 0;
+  overflow-wrap: anywhere;
+}
+.qrs-row-serial {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.04em;
+}
+.qrs-row-side {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  flex: 0 0 auto;
+}
+
+/* --- destructive confirm -------------------------------------------------- */
+/* A <details> rather than window.confirm: it is keyboard reachable, it works
+   with scripting off, and it cannot be dismissed by a stray click. The summary
+   is the trigger, so it must not inherit the button's own hover pointer. */
+.qrs-danger summary {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  list-style: none;
+}
+.qrs-danger summary::-webkit-details-marker {
+  display: none;
+}
+.qrs-danger > form {
+  margin-top: var(--space-16);
+  padding-top: var(--space-16);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.qrs h1 .badge {
+  vertical-align: middle;
+  margin-left: var(--space-8);
+}
+
+@media (max-width: 560px) {
+  .qrs-filters .field {
+    flex: 1 1 100%;
+  }
+  .qrs-row-side {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
+
+/* ================================== Batch QR generation (/qrs/batches*) =========
+ * Functional layout only: the generator is a two-column form + preview on a wide
+ * screen and a single column on a phone, and the metadata rows stack. No
+ * attempt is made to restyle anything that already exists. */
+
+/* Metadata rows: name + value + remove, collapsing to one column on narrow
+   screens so a phone user is not typing two inputs side by side at 160px. */
+.batch-meta-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: var(--space-12);
+  align-items: end;
+  padding: var(--space-12);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-12);
+}
+.batch-meta-row > .field {
+  min-width: 0;
+}
+.batch-meta-remove {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.batch-meta-heading {
+  margin-top: var(--space-16);
+  margin-bottom: var(--space-8);
+}
+
+/* The preview card sits beside the form on a wide screen. min-width: 0 on the
+   grid children is load-bearing: a long serial in the recap would otherwise
+   force the track wider than the viewport and scroll the page sideways. */
+.batch-preview-card {
+  margin-top: var(--space-16);
+}
+.batch-preview-sample {
+  list-style: none;
+  margin: var(--space-8) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.batch-preview-sample li {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--fs-body-sm);
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+.batch-preview-note {
+  margin-top: var(--space-12);
+  padding: var(--space-8) var(--space-12);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-2);
+  color: var(--color-text-secondary);
+}
+
+/* Actions inside a batch QR table row. Kept on one line so a row does not grow
+   to two heights when a screen reader or a long destination widens it. */
+.batch-row-actions {
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: nowrap;
+}
+
+/* The busy state the download island applies to an <a> (anchors cannot be
+   `disabled`, so the visual affordance has to come from the class). */
+.btn.is-busy,
+.dropdown-item.is-busy {
+  opacity: 0.65;
+  cursor: progress;
+  pointer-events: none;
+}
+
+@media (min-width: 900px) {
+  [data-batch-generator] {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+    gap: var(--space-24);
+    align-items: start;
+  }
+  [data-batch-generator] > form {
+    min-width: 0;
+  }
+  .batch-preview-card {
+    margin-top: 0;
+    position: sticky;
+    top: var(--space-16);
+  }
+}
+
+@media (max-width: 640px) {
+  .batch-meta-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .batch-meta-remove {
+    align-items: flex-start;
+  }
+  .batch-meta-remove .btn {
+    width: 100%;
+  }
 }

@@ -14,6 +14,8 @@ export interface TextareaProps {
   maxlength?: number;
   hideLabel?: boolean;
   class?: string;
+  /** arbitrary data-* hooks (island binding for inline validation) */
+  [key: `data-${string}`]: string | boolean | undefined;
 }
 
 /**
@@ -34,7 +36,9 @@ export const Textarea: FC<TextareaProps> = ({
   maxlength,
   hideLabel,
   class: cls,
+  ...rest
 }) => {
+  const passthrough = rest as Record<string, string | boolean | undefined>;
   const hintId = hint ? `${id}-hint` : undefined;
   const errorId = error ? `${id}-error` : undefined;
   const describedBy = [hintId, errorId].filter(Boolean).join(" ") || undefined;
@@ -60,16 +64,17 @@ export const Textarea: FC<TextareaProps> = ({
         maxlength={maxlength}
         aria-invalid={error ? "true" : undefined}
         aria-describedby={describedBy}
+        {...passthrough}
       >
         {value}
       </textarea>
       {hint && !error ? (
-        <p class="field-hint" id={hintId}>
+        <p class="field-hint" id={hintId} data-hint-for={id}>
           {hint}
         </p>
       ) : null}
       {error ? (
-        <p class="field-error" id={errorId} role="alert">
+        <p class="field-error" id={errorId} data-error-for={id} role="alert">
           {error}
         </p>
       ) : null}

@@ -86,6 +86,10 @@ export async function getUserFromRequest(
   email: string;
   plan_id: string;
   onboarded_at: number | null;
+  name: string | null;
+  phone: string | null;
+  avatar_key: string | null;
+  current_business_id: string | null;
 } | null> {
   const sessionId = readCookie(request, SESSION_COOKIE);
   if (!sessionId) return null;
@@ -131,6 +135,10 @@ export async function getUserFromRequest(
       email: user.email,
       plan_id: user.plan_id,
       onboarded_at: user.onboarded_at,
+      name: user.name,
+      phone: user.phone,
+      avatar_key: user.avatar_key,
+      current_business_id: user.current_business_id,
     };
   } catch (err) {
     console.error("[session] lookup failed:", err);

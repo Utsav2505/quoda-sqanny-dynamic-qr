@@ -47,7 +47,7 @@
   ],
   "r2_buckets": [
     {
-      "binding": "quoda_assets",
+      "binding": "ASSETS_BUCKET",
       "bucket_name": "quoda-assets"
     }
   ],

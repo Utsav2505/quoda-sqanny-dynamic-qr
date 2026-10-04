@@ -1,4 +1,4 @@
-import type { FC } from "hono/jsx";
+import type { FC, Child } from "hono/jsx";
 import { Icon } from "../icons";
 
 export interface NavLink {
@@ -14,6 +14,8 @@ export interface NavProps {
   cta?: { label: string; href: string };
   /** href the brand wordmark points to */
   brandHref?: string;
+  /** controls rendered after the CTA — account menu, menus, etc. */
+  end?: Child;
 }
 
 /**
@@ -22,7 +24,7 @@ export interface NavProps {
  * `data-theme-toggle` (handled by the theme island) and an accessible label.
  * The toggle shows both sun/moon glyphs; CSS reveals the relevant one per theme.
  */
-export const Nav: FC<NavProps> = ({ links = [], cta, brandHref = "/" }) => (
+export const Nav: FC<NavProps> = ({ links = [], cta, brandHref = "/", end }) => (
   <header class="nav">
     <div class="nav-inner">
       <a class="nav-brand" href={brandHref} aria-label="Sqanny home">
@@ -66,6 +68,7 @@ export const Nav: FC<NavProps> = ({ links = [], cta, brandHref = "/" }) => (
             <span class="btn-label">{cta.label}</span>
           </a>
         ) : null}
+        {end}
       </div>
     </div>
   </header>

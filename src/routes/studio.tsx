@@ -3,7 +3,9 @@ import { raw } from "hono/html";
 import type { FC } from "hono/jsx";
 import type { AppEnv } from "../middleware/auth";
 import { requireAuth } from "../middleware/auth";
-import { getQrById, getDynamicPageByQrId, type QrRow } from "../db/queries";
+import { getQrById, getDynamicPageByQrId, listBusinessesForUser, type QrRow, type BusinessSummary } from "../db/queries";
+import { getRegistryByQrCodeId } from "../db/qr-registry";
+import { EmptyState, EmptyStateButton } from "../ui/components/empty-state";
 import type { QrType } from "../types";
 import type { QrDesign, QrFields } from "../lib/qr/types";
 import { AppShell } from "../ui/app-shell";
@@ -248,6 +250,10 @@ interface StudioViewProps {
    */
   shortCode?: string;
   previewSvg: string;
+  /** the user's active businesses, for the assignment picker */
+  businesses?: BusinessSummary[];
+  /** currently assigned business (edit mode) */
+  currentBusinessId?: string | null;
 }
 
 /**
@@ -281,7 +287,7 @@ const DeferredDestinationToggle: FC = () => (
   </div>
 );
 
-const StudioView: FC<StudioViewProps> = ({ mode, activeType, fields, design, isDynamic, title, qrId, shortCode, previewSvg }) => {
+const StudioView: FC<StudioViewProps> = ({ mode, activeType, fields, design, isDynamic, title, qrId, shortCode, previewSvg, businesses = [], currentBusinessId = null }) => {
   return (
     <div
       class="studio"
@@ -322,11 +328,41 @@ const StudioView: FC<StudioViewProps> = ({ mode, activeType, fields, design, isD
             </div>
           </section>
 
-          {/* Title */}
+          {/* Title + business assignment */}
           <section class="studio-panel">
             <div class="field">
               <label class="field-label" for="qr-title">Name (for your dashboard)</label>
               <input class="input" id="qr-title" name="title" type="text" data-title placeholder="My QR code" value={title} />
+            </div>
+
+            {/* Business assignment. Optional on purpose: a code can exist
+                before the account has any business, and reassigning later is
+                one click on the QR's own page. */}
+            <div class="field studio-biz-field">
+              <label class="field-label" for="qr-business">Business</label>
+              <div class="select-wrap">
+                <select class="select" id="qr-business" data-studio-business>
+                  <option value="" selected={!currentBusinessId}>
+                    Not assigned
+                  </option>
+                  {businesses.map((b) => (
+                    <option value={b.id} selected={b.id === currentBusinessId}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+                <span class="select-chevron" aria-hidden="true"><Icon name="chevron" size={18} /></span>
+              </div>
+              <p class="studio-biz-help t-caption text-tertiary">
+                {businesses.length
+                  ? "Groups this code under a business, so its scan history lives there."
+                  : "Create a business to group codes by location."}
+              </p>
+              {businesses.length === 0 ? (
+                <a class="studio-biz-link t-body-sm" href="/app/businesses/new">
+                  <Icon name="plus" size={14} /> Add your first business
+                </a>
+              ) : null}
             </div>
           </section>
 
@@ -471,15 +507,24 @@ const StudioView: FC<StudioViewProps> = ({ mode, activeType, fields, design, isD
 // Routes
 // ---------------------------------------------------------------------------
 
-studio.get("/app/new", (c) => {
+studio.get("/app/new", async (c) => {
   const user = c.get("user")!;
   const typeParam = c.req.query("type") as QrType | undefined;
   const activeType: QrType = typeParam && FIELDS[typeParam] ? typeParam : "url";
   const design = { ...DEFAULT_DESIGN };
   const previewSvg = placeholderSvg(design);
 
+  const all = await listBusinessesForUser(c.env.DB, user.id);
+  const businesses = all.filter((b) => b.status === "active");
+
   return c.html(
-    <AppShell user={user} title="New QR code" active="new">
+    <AppShell
+      user={user}
+      title="New QR code"
+      active="new"
+      businesses={all}
+      notice={c.req.query("notice")}
+    >
       <StudioView
         mode="new"
         activeType={activeType}
@@ -488,6 +533,10 @@ studio.get("/app/new", (c) => {
         isDynamic={TYPES.find((t) => t.type === activeType)?.rich ?? false}
         title=""
         previewSvg={previewSvg}
+        businesses={businesses}
+        // Pre-select the business the user is already scoped to, so the common
+        // case ("I'm working on ABC Cafe") needs no interaction at all.
+        currentBusinessId={user.current_business_id}
       />
       <script src="/js/studio.js" defer></script>
     </AppShell>,
@@ -499,16 +548,30 @@ studio.get("/app/:id/edit", async (c) => {
   const id = c.req.param("id");
   const qr = await getQrById(c.env.DB, id);
   if (!qr || qr.user_id !== user.id) {
+    const businesses = await listBusinessesForUser(c.env.DB, user.id);
     return c.html(
-      <AppShell user={user} title="Not found">
-        <div class="empty-state">
-          <h1 class="t-display-md">QR code not found</h1>
-          <p class="t-body text-secondary">It may have been deleted, or it isn't yours.</p>
-          <Button href="/app" variant="primary">Back to dashboard</Button>
+      <AppShell user={user} title="Not found" active="dashboard" businesses={businesses}>
+        <div class="page-narrow">
+          <EmptyState
+            icon="close"
+            title="QR code not found"
+            body="It may have been deleted, or it isn't yours."
+            action={<EmptyStateButton href="/app" label="Back to dashboard" />}
+          />
         </div>
       </AppShell>,
       404,
     );
+  }
+
+  // A physical stand has its own screen, and its own lifecycle: a permanent
+  // serial, a business scope and an archive state the studio knows nothing
+  // about. Editing it here was possible, which is how `qr_registry` and
+  // `qr_codes` came to disagree about a printed asset. Send the user to the one
+  // editor that owns it rather than presenting a second, divergent form.
+  const registry = qr.source === "registration" ? await getRegistryByQrCodeId(c.env.DB, qr.id) : null;
+  if (registry) {
+    return c.redirect(`/qrs/${registry.id}`, 302);
   }
 
   const design = { ...DEFAULT_DESIGN, ...safeJson<Partial<QrDesign>>(qr.design_json, {}) } as QrDesign;
@@ -522,9 +585,21 @@ studio.get("/app/:id/edit", async (c) => {
   }
 
   const previewSvg = initialSvg(qr, design, c.env.APP_URL);
+  const all = await listBusinessesForUser(c.env.DB, user.id);
+  const businesses = all.filter((b) => b.status === "active");
 
   return c.html(
-    <AppShell user={user} title="Edit QR code">
+    <AppShell
+      user={user}
+      title="Edit QR code"
+      // Without `active` and `businesses` the switcher vanished and no nav item
+      // was marked current, so editing a code silently dropped the user out of
+      // their business context.
+      active="dashboard"
+      businesses={all}
+      switchReturnTo={`/app/${qr.id}`}
+      notice={c.req.query("notice")}
+    >
       {raw(`<script>window.__QR_INITIAL__=${JSON.stringify({ id: qr.id, type: qr.type, isDynamic: qr.is_dynamic === 1, rich })}</script>`)}
       <StudioView
         mode="edit"
@@ -536,6 +611,8 @@ studio.get("/app/:id/edit", async (c) => {
         qrId={qr.id}
         shortCode={qr.short_code ?? ""}
         previewSvg={previewSvg}
+        businesses={businesses}
+        currentBusinessId={qr.business_id}
       />
       <script src="/js/studio.js" defer></script>
     </AppShell>,

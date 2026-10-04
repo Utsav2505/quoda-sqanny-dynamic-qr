@@ -7,7 +7,7 @@ import { Card } from "../ui/components/card";
 import { Badge } from "../ui/components/badge";
 import { Icon } from "../ui/icons";
 import { getLimits } from "../lib/plans";
-import { countDynamicByUser } from "../db/queries";
+import { countDynamicByUser, listBusinessesForUser } from "../db/queries";
 
 export const settings = new Hono<AppEnv>();
 settings.use("/app/*", requireAuth);
@@ -23,13 +23,20 @@ settings.get("/app/settings", async (c) => {
   const user = c.get("user")!;
   const limits = getLimits(user.plan_id);
   const dynamicUsed = await countDynamicByUser(c.env.DB, user.id);
+  const businesses = await listBusinessesForUser(c.env.DB, user.id);
 
   const dynamicLimitText =
     limits.dynamicCodes === -1 ? "Unlimited" : String(limits.dynamicCodes);
   const retentionText = `${limits.analyticsRetentionDays} days`;
 
   return c.html(
-    <AppShell user={user} title="Settings" active="settings">
+    <AppShell
+      user={user}
+      title="Settings"
+      active="settings"
+      businesses={businesses}
+      notice={c.req.query("notice")}
+    >
       <header class="settings-header">
         <h1 class="t-display-md">Settings</h1>
         <p class="settings-sub t-body text-secondary">
@@ -115,13 +122,18 @@ settings.get("/app/settings", async (c) => {
           <p class="settings-signout-text t-body text-secondary">
             Signed in as {user.email}.
           </p>
-          <Button
-            href="/auth/logout"
-            variant="secondary"
-            iconLeft={<Icon name="logout" />}
-          >
-            Sign out
-          </Button>
+          {/* A POST form, not a link: signing out clears a cookie, which is a
+              state change, and a GET would let any page on the internet log the
+              user out with an <img src>. See the same control in account-menu.tsx. */}
+          <form method="post" action="/auth/logout" data-guard-submit>
+            <Button
+              type="submit"
+              variant="secondary"
+              iconLeft={<Icon name="logout" />}
+            >
+              Sign out
+            </Button>
+          </form>
         </Card>
       </div>
     </AppShell>,

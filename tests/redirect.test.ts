@@ -32,7 +32,24 @@ async function seedDynamicQr(code: string, destination: string): Promise<string>
     content_json: "{}",
     design_json: "{}",
   });
+  OWNER_OF.set(qr.id, user.id);
   return qr.id;
+}
+
+/**
+ * The user who owns each seeded QR.
+ *
+ * Needed because `updateQr` is owner-scoped: it takes the caller's id as a
+ * predicate rather than trusting the caller to have checked ownership. A test
+ * that patches a QR therefore has to be the owner, not just any account.
+ */
+const OWNER_OF = new Map<string, string>();
+
+/** Patch a seeded QR as its actual owner. */
+function patchQr(qrId: string, patch: Record<string, unknown>) {
+  const ownerId = OWNER_OF.get(qrId);
+  if (!ownerId) throw new Error(`no seeded owner recorded for ${qrId}`);
+  return updateQr(env.DB, qrId, ownerId, patch);
 }
 
 describe("GET /r/:code", () => {
@@ -80,7 +97,7 @@ describe("GET /r/:code", () => {
   it("renders the claim page when the code exists but has no destination", async () => {
     const code = "nodst" + crypto.randomUUID().slice(0, 6);
     const qrId = await seedDynamicQr(code, "https://temp");
-    await updateQr(env.DB, qrId, { destination: null });
+    await patchQr(qrId, { destination: null });
 
     const ctx = makeCtx();
     const res = await redirect.fetch(
@@ -98,12 +115,13 @@ describe("GET /r/:code", () => {
     expect(html).toContain("Sign in to set the destination");
     // Signed out, so the form must NOT be rendered — only the sign-in CTA.
     expect(html).not.toContain('name="url"');
+    await ctx._drain();
   });
 
   it("editing the destination changes the redirect target (same short code)", async () => {
     const code = "edit" + crypto.randomUUID().slice(0, 6);
     const qrId = await seedDynamicQr(code, "https://old.example.com");
-    await updateQr(env.DB, qrId, { destination: "https://new.example.com" });
+    await patchQr(qrId, { destination: "https://new.example.com" });
 
     const ctx = makeCtx();
     const res = await redirect.fetch(

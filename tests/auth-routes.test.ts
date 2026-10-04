@@ -170,23 +170,59 @@ describe("GET /auth/verify", () => {
   });
 });
 
-describe("GET /auth/logout", () => {
-  it("clears the session cookie and redirects home", async () => {
-    const user = await createUser(env.DB, `out-${crypto.randomUUID()}@example.com`);
-    const setCookie = await startSession(env, user.id);
-    const cookie = setCookie.split(";")[0];
+describe("signing out", () => {
+    it("POST /auth/logout clears the session cookie and redirects home", async () => {
+      const user = await createUser(env.DB, `out-${crypto.randomUUID()}@example.com`);
+      const setCookie = await startSession(env, user.id);
+      const cookie = setCookie.split(";")[0];
 
-    const res = await auth.fetch(
-      new Request("https://q.test/auth/logout", { headers: { Cookie: cookie } }),
-      env,
-      ctx,
-    );
-    expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe("/");
-    const cleared = res.headers.get("set-cookie");
-    expect(cleared).toContain("Max-Age=0");
+      const res = await auth.fetch(
+        new Request("https://q.test/auth/logout", {
+          method: "POST",
+          headers: { Cookie: cookie },
+        }),
+        env,
+        ctx,
+      );
+      // 303, not 302: the browser must follow up with a GET after a state change,
+      // and a 302 leaves that open to interpretation.
+      expect(res.status).toBe(303);
+      expect(res.headers.get("location")).toBe("/");
+      const cleared = res.headers.get("set-cookie");
+      expect(cleared).toContain("Max-Age=0");
+    });
+
+    it("GET /auth/logout does NOT sign you out — it asks first", async () => {
+      // The session cookie is SameSite=Lax, which deliberately permits
+      // cross-site top-level GET navigations. A GET logout could therefore be
+      // fired from any page with a single <img> tag, silently signing the user
+      // out. The GET now only renders a confirmation.
+      const user = await createUser(env.DB, `out-${crypto.randomUUID()}@example.com`);
+      const setCookie = await startSession(env, user.id);
+      const cookie = setCookie.split(";")[0];
+
+      const res = await auth.fetch(
+        new Request("https://q.test/auth/logout", { headers: { Cookie: cookie } }),
+        env,
+        ctx,
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers.get("set-cookie")).toBeNull();
+      // It offers the real action as a POST, and a way to back out.
+      const html = await res.text();
+      expect(html).toContain('method="post"');
+      expect(html).toContain('action="/auth/logout"');
+      expect(html).toContain("Stay signed in");
+
+      // And the session is genuinely still alive.
+      const still = await auth.fetch(
+        new Request("https://q.test/login", { headers: { Cookie: cookie } }),
+        env,
+        ctx,
+      );
+      expect(still.status).toBe(200);
+    });
   });
-});
 
 describe("GET /app (dashboard)", () => {
   it("redirects to /login without a session", async () => {
