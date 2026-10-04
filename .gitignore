@@ -12,3 +12,8 @@ public/js/
 styleguide-*.png
 test-results/
 /*.png
+
+# Vite build output for the new React frontend. Content-hashed filenames change on
+every build, so tracking them would churn the diff and conflict constantly. The
+# legacy public/styles and public/js are ALREADY ignored above for the same reason.
+public/_app/
